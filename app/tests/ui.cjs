@@ -44,6 +44,8 @@ function fixtures(scenario) {
         title: i === 1 ? 'Malenia no-hit (finally)' : null, favorite: i % 4 === 1,
         labels: i % 3 === 1 ? ['clutch', 'boss'] : i === 4 ? ['funny'] : [],
         markers: i === 1 ? [1.5, 3.5] : [],
+        // Game and mic mixed into a first track, then each on its own.
+        ...(i === 1 ? { audio_tracks: 3, mixed_audio: true } : {}),
       })
       i++
     }
@@ -356,6 +358,9 @@ async function runScenario(scenario, browser) {
   await page.waitForFunction(() => window.__lastRender)
   const rendered = await page.evaluate(() => window.__lastRender)
   assert.equal(rendered.maxMb, 10, 'render asks for the 10 MB fit')
+  // The clip starts with game and mic mixed: levels for the two sources
+  // only (the app leaves the mix out of the edit).
+  assert.deepEqual(rendered.volumes, [1, 1], 'a level per source track, none for the mix')
   assert.deepEqual([rendered.start, rendered.end], [1, 4.5], 'the trimmed range')
   assert.equal(rendered.vertical, null, 'original format unless asked')
   assert.equal(rendered.slow, null, 'no slow motion unless asked')

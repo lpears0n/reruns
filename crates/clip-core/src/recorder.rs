@@ -16,7 +16,7 @@ use gstreamer_app as gst_app;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    audio::{AudioSource, add_audio_branch},
+    audio::{AudioSource, add_aac_branch, add_audio_mix, add_audio_source},
     capture::{CapturePath, CaptureTarget, VideoConfig, add_video_branch},
     encoder::Encoder,
     ring::{ReplayBuffer, running_time_buffer},
@@ -68,6 +68,9 @@ fn zero_copy_default() -> bool {
 pub struct SavedClip {
     pub path: PathBuf,
     pub markers: Vec<f64>,
+    /// Its first audio track is the sources mixed together (game and mic),
+    /// the one players play; the sources' own tracks follow.
+    pub mixed_audio: bool,
 }
 
 /// The marks within `start ..= start + duration`, in seconds from `start`,
@@ -356,7 +359,7 @@ impl Recorder {
                 encoder,
                 path,
                 replay_seconds: cfg.replay_seconds,
-                audio_names: cfg.audio.iter().map(AudioSource::name).collect(),
+                audio_names: audio_track_names(&cfg.audio),
                 error: built.error,
                 stop: built.stop,
                 bus_thread: Some(built.bus_thread),
@@ -466,7 +469,11 @@ impl Recorder {
                 markers = markers.len(),
                 "saved clip"
             );
-            Ok(SavedClip { path, markers })
+            Ok(SavedClip {
+                path,
+                markers,
+                mixed_audio: clip.mixed,
+            })
         })
         .await?
     }
@@ -553,6 +560,15 @@ impl Drop for Recorder {
     }
 }
 
+/// The audio tracks' names in buffer (and clip) order: "mix" first when
+/// there is more than one source, as `Pipeline::build` lays them out.
+fn audio_track_names(sources: &[AudioSource]) -> Vec<&'static str> {
+    let mix = (sources.len() > 1).then_some("mix");
+    mix.into_iter()
+        .chain(sources.iter().map(AudioSource::name))
+        .collect()
+}
+
 /// Stop capture that lives outside GStreamer's own elements (Windows' HDR
 /// window capture runs a Windows Graphics Capture session with FP16 frames
 /// on the GPU) as soon as the pipeline stops, rather than whenever the last
@@ -585,8 +601,28 @@ impl Pipeline {
         path: CapturePath,
     ) -> Result<Self> {
         let window = gst::ClockTime::from_seconds(cfg.replay_seconds.into());
-        let buffer = Arc::new(Mutex::new(ReplayBuffer::new(window, cfg.audio.len())));
         let pipeline = gst::Pipeline::new();
+        // Audio tracks in clip order: with more than one source, all of them
+        // mixed into one first (players only play the first audio track),
+        // then each source's own.
+        let tees = cfg
+            .audio
+            .iter()
+            .map(|src| add_audio_source(&pipeline, src))
+            .collect::<Result<Vec<_>>>()?;
+        let mixed = tees.len() > 1;
+        let mut tracks = Vec::new();
+        if mixed {
+            tracks.push(("mix", add_audio_mix(&pipeline, &tees, cfg.audio_bitrate)?));
+        }
+        for (src, tee) in cfg.audio.iter().zip(&tees) {
+            tracks.push((
+                src.name(),
+                add_aac_branch(&pipeline, tee, cfg.audio_bitrate)?,
+            ));
+        }
+        let buffer = ReplayBuffer::new(window, tracks.len());
+        let buffer = Arc::new(Mutex::new(if mixed { buffer.with_mix() } else { buffer }));
 
         let parse = add_video_branch(&pipeline, target, encoder, &cfg.video, path)?;
         let buf = buffer.clone();
@@ -603,13 +639,12 @@ impl Pipeline {
             ask
         })?;
 
-        for (i, src) in cfg.audio.iter().enumerate() {
-            let parse = add_audio_branch(&pipeline, src, cfg.audio_bitrate)?;
+        for (i, (name, parse)) in tracks.into_iter().enumerate() {
             let buf = buffer.clone();
             link_appsink(
                 &pipeline,
                 &parse,
-                &format!("{}-sink", src.name()),
+                &format!("{name}-sink"),
                 move |caps, buffer| {
                     let mut b = buf.lock().unwrap();
                     if let Some(caps) = caps {

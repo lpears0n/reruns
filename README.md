@@ -58,7 +58,10 @@ Releases, updates and Windows code signing: [docs/RELEASING.md](docs/RELEASING.m
   top bar stops recording it for good (undo under Settings → Recording).
 - **Settings → Audio** picks which output's sound is recorded as the game
   track (say, only your headset) and which microphone goes on its own
-  track. An unplugged device falls back to the default.
+  track. An unplugged device falls back to the default. With the mic on,
+  clips start with game and mic mixed into one track, the one every
+  player (and Discord) plays; the separate tracks follow it for the
+  editor's levels.
 - The save sound can be any short file (WAV, MP3, OGG, Opus, FLAC; ten
   seconds at most), with its own volume and, if you like, a different one
   for screenshots: Settings → General. The file is copied in, so moving

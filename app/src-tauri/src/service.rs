@@ -245,6 +245,7 @@ async fn run(
                                     game: g.name.clone(),
                                     steam_app_id: g.steam_app_id,
                                     markers: saved.markers.clone(),
+                                    mixed_audio: saved.mixed_audio,
                                     ..Default::default()
                                 };
                                 if let Err(e) = library::write_meta(&saved.path, &meta) {

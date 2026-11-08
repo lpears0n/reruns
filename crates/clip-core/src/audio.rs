@@ -118,14 +118,26 @@ fn devices(kind: DeviceKind) -> Vec<AudioDevice> {
     devices
 }
 
-/// Add `pipewiresrc → 48 kHz stereo → AAC → aacparse` to `pipeline` and return
+/// Add `source → 48 kHz stereo → AAC → aacparse` to `pipeline` and return
 /// the `aacparse` element for the caller to link onwards.
 pub fn add_audio_branch(
     pipeline: &gst::Pipeline,
     source: &AudioSource,
     bitrate: i32,
 ) -> Result<gst::Element> {
-    let src = make_source(&present(source))?;
+    let raw = add_audio_source(pipeline, source)?;
+    add_aac_branch(pipeline, &raw, bitrate)
+}
+
+/// Open `source` (falling back to the default device like the recorder
+/// does) as 48 kHz stereo, ending in a `tee` that [`add_aac_branch`] and
+/// [`add_audio_mix`] each take a branch from.
+pub fn add_audio_source(pipeline: &gst::Pipeline, source: &AudioSource) -> Result<gst::Element> {
+    add_raw_source(pipeline, make_source(&present(source))?)
+}
+
+/// `src → audioconvert → audioresample → 48 kHz stereo → tee`.
+pub fn add_raw_source(pipeline: &gst::Pipeline, src: gst::Element) -> Result<gst::Element> {
     let convert = gst::ElementFactory::make("audioconvert").build()?;
     let resample = gst::ElementFactory::make("audioresample").build()?;
     let caps = gst::ElementFactory::make("capsfilter")
@@ -137,7 +149,18 @@ pub fn add_audio_branch(
                 .build(),
         )
         .build()?;
-    let queue = gst::ElementFactory::make("queue")
+    let tee = gst::ElementFactory::make("tee").build()?;
+    let chain = [src, convert, resample, caps, tee.clone()];
+    pipeline.add_many(&chain)?;
+    gst::Element::link_many(&chain)?;
+    Ok(tee)
+}
+
+/// A leaky queue that holds up to half a second: a branch that stalls
+/// drops its own oldest audio instead of holding up the source (and with
+/// it every other branch of its tee).
+fn leaky_queue() -> Result<gst::Element> {
+    Ok(gst::ElementFactory::make("queue")
         .property(
             "max-size-time",
             gst::ClockTime::from_mseconds(500).nseconds(),
@@ -145,12 +168,62 @@ pub fn add_audio_branch(
         .property("max-size-buffers", 0u32)
         .property("max-size-bytes", 0u32)
         .property_from_str("leaky", "downstream")
-        .build()?;
+        .build()?)
+}
+
+/// One track: a branch of `tee` (from [`add_audio_source`]) encoded to
+/// AAC. Returns the `aacparse` at its end.
+pub fn add_aac_branch(
+    pipeline: &gst::Pipeline,
+    tee: &gst::Element,
+    bitrate: i32,
+) -> Result<gst::Element> {
+    let queue = leaky_queue()?;
     let enc = aac_encoder(bitrate)?;
     let parse = gst::ElementFactory::make("aacparse").build()?;
-
-    let chain = [src, convert, resample, caps, queue, enc, parse.clone()];
+    let chain = [queue.clone(), enc, parse.clone()];
     pipeline.add_many(&chain)?;
+    gst::Element::link_many(&chain)?;
+    tee.link(&queue)?;
+    Ok(parse)
+}
+
+/// One track of every source mixed together (game and mic in one), from
+/// a branch of each `tee`. Clips put it first, because players (and the
+/// app's own viewer) only play a file's first audio track; the sources'
+/// own tracks follow it for the editor's levels. Returns the `aacparse`
+/// at its end.
+pub fn add_audio_mix(
+    pipeline: &gst::Pipeline,
+    tees: &[gst::Element],
+    bitrate: i32,
+) -> Result<gst::Element> {
+    let mixer = gst::ElementFactory::make("audiomixer").build()?;
+    pipeline.add(&mixer)?;
+    for tee in tees {
+        // Each input converted on its own: the mixer takes one format, and
+        // the sources may deliver different ones.
+        let queue = leaky_queue()?;
+        let convert = gst::ElementFactory::make("audioconvert").build()?;
+        pipeline.add_many([&queue, &convert])?;
+        gst::Element::link_many([&queue, &convert, &mixer])?;
+        tee.link(&queue)?;
+    }
+    let convert = gst::ElementFactory::make("audioconvert").build()?;
+    let caps = gst::ElementFactory::make("capsfilter")
+        .property(
+            "caps",
+            gst::Caps::builder("audio/x-raw")
+                .field("rate", 48_000i32)
+                .field("channels", 2i32)
+                .build(),
+        )
+        .build()?;
+    let queue = leaky_queue()?;
+    let enc = aac_encoder(bitrate)?;
+    let parse = gst::ElementFactory::make("aacparse").build()?;
+    let chain = [mixer, convert, caps, queue, enc, parse.clone()];
+    pipeline.add_many(&chain[1..])?;
     gst::Element::link_many(&chain)?;
     Ok(parse)
 }

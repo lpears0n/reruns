@@ -54,6 +54,9 @@ export interface Clip {
   labels: string[]
   /** Moments marked while recording, in seconds from the start. */
   markers: number[]
+  /** The first audio track is game and mic mixed (what players play); the
+   *  sources' own tracks follow, and the editor's levels are for those. */
+  mixed_audio?: boolean
 }
 
 /** How a size-limited export will be encoded. */
