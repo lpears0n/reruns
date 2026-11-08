@@ -619,7 +619,11 @@ first and rejected: 5–9 s per 5-minute clip on 4 cores (avenc_aac's
 two-loop coder alone is ~8 s), against one more real-time encoder.
 `tests/save.rs` runs two live tones through the real branches: each
 track -13.5 dB, the mix -10.5 dB (both), an edit of it -10.5 dB (not
-doubled). Clips saved before this keep the mic on track 2 only; render
+doubled). `a_stalled_mixer_never_holds_up_the_source_tracks` holds the
+mixer's output thread for 2 s (4× the queues): game and mic tracks keep
+21 ms packet steps, the mix drops ~0.8 s and resumes; with the mixer's
+input queues made blocking, the game track gets a ~300 ms hole and the
+test fails. Clips saved before this keep the mic on track 2 only; render
 an edit to hear it. Not yet run on Windows.
 
 **v1.1.5 prepared** with it on `claude/new-session-kuipn1` (one PR: the

@@ -466,13 +466,19 @@ fn mean_volume(path: &Path, n: usize) -> f64 {
         .unwrap_or_else(|| panic!("no mean_volume for track {n}: {log}"))
 }
 
-/// Game and mic, two live sources, through the recorder's own audio
-/// branches: the clip's first audio track has both mixed (players only
-/// play the first), and each source keeps its own track after it for the
-/// editor.
-#[test]
-fn mixes_game_and_mic_into_the_first_audio_track() {
-    use std::sync::{Arc, Mutex};
+/// Record `seconds` of live video with two live tones as game and mic,
+/// through the recorder's own audio branches (the mix first, then each
+/// source's track), and return everything as a clip. With `stall_mixer`
+/// (after, for), the mixer's output thread is held up once for that long,
+/// as a mixer that hangs would; the returned flag says it happened.
+fn record_game_and_mic(
+    seconds: u64,
+    stall_mixer: Option<(std::time::Duration, std::time::Duration)>,
+) -> (clip_core::ring::Clip, bool) {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use clip_core::audio::{add_aac_branch, add_audio_mix, add_raw_source};
 
@@ -543,8 +549,28 @@ fn mixes_game_and_mic_into_the_first_audio_track() {
         parse.link(&sink).unwrap();
         feed(&sink, Some(i));
     }
+    let stalled = Arc::new(AtomicBool::new(false));
+    if let Some((after, length)) = stall_mixer {
+        let mixer = pipeline
+            .iterate_elements()
+            .into_iter()
+            .filter_map(Result::ok)
+            .find(|e| e.factory().is_some_and(|f| f.name() == "audiomixer"))
+            .expect("the mix branch has an audiomixer");
+        let started = std::time::Instant::now();
+        let stalled = stalled.clone();
+        mixer
+            .static_pad("src")
+            .unwrap()
+            .add_probe(gst::PadProbeType::BUFFER, move |_, _| {
+                if started.elapsed() >= after && !stalled.swap(true, Ordering::SeqCst) {
+                    std::thread::sleep(length);
+                }
+                gst::PadProbeReturn::Ok
+            });
+    }
     pipeline.set_state(gst::State::Playing).unwrap();
-    std::thread::sleep(std::time::Duration::from_secs(4));
+    std::thread::sleep(std::time::Duration::from_secs(seconds));
     pipeline.set_state(gst::State::Null).unwrap();
 
     let clip = ring
@@ -552,6 +578,16 @@ fn mixes_game_and_mic_into_the_first_audio_track() {
         .unwrap()
         .snapshot(gst::ClockTime::from_seconds(30))
         .unwrap();
+    (clip, stalled.load(Ordering::SeqCst))
+}
+
+/// Game and mic, two live sources, through the recorder's own audio
+/// branches: the clip's first audio track has both mixed (players only
+/// play the first), and each source keeps its own track after it for the
+/// editor.
+#[test]
+fn mixes_game_and_mic_into_the_first_audio_track() {
+    let (clip, _) = record_game_and_mic(4, None);
     assert!(clip.mixed, "the clip says it starts with the mix");
     assert_eq!(clip.audio.len(), 3);
     let dir = std::env::temp_dir().join(format!("reruns-mix-{}", std::process::id()));
@@ -598,4 +634,53 @@ fn mixes_game_and_mic_into_the_first_audio_track() {
     eprintln!("edit mean volume: {both} dB");
     assert!((both - mix).abs() < 1.5, "edit {both} dB, mix {mix} dB");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// The longest step between consecutive packets of `track`.
+fn longest_gap(track: &clip_core::ring::ClipTrack) -> gst::ClockTime {
+    track
+        .buffers
+        .windows(2)
+        .map(|w| w[1].pts().unwrap() - w[0].pts().unwrap())
+        .max()
+        .unwrap_or(gst::ClockTime::ZERO)
+}
+
+/// A mixer that hangs (here for 2 s, four times what its queues hold)
+/// costs only mix audio: game and mic keep their own tracks whole, because
+/// every branch into and out of the mixer sits behind a leaky queue
+/// instead of holding up the sources. Then mixing carries on.
+#[test]
+fn a_stalled_mixer_never_holds_up_the_source_tracks() {
+    let after = std::time::Duration::from_secs(1);
+    let length = std::time::Duration::from_secs(2);
+    let (clip, stalled) = record_game_and_mic(5, Some((after, length)));
+    assert!(stalled, "the mixer was held up");
+    assert_eq!(clip.audio.len(), 3);
+    for (name, track) in [("game", &clip.audio[1]), ("mic", &clip.audio[2])] {
+        let gap = longest_gap(track);
+        let first = track.buffers.first().unwrap().pts().unwrap();
+        let last = track.buffers.last().unwrap().pts().unwrap();
+        eprintln!("{name}: longest gap {gap}, covers {first}..{last}");
+        // AAC packets are ~21 ms apart; a source held up by the mixer would
+        // show the stall here.
+        assert!(
+            gap < gst::ClockTime::from_mseconds(100),
+            "{name} track has a {gap} gap"
+        );
+        assert!(
+            last - first > gst::ClockTime::from_seconds(4),
+            "{name} track covers only {first}..{last}"
+        );
+    }
+    // The mix came back after the stall.
+    let mix_last = clip.audio[0].buffers.last().unwrap().pts().unwrap();
+    eprintln!(
+        "mix: longest gap {}, last packet {mix_last}",
+        longest_gap(&clip.audio[0])
+    );
+    assert!(
+        mix_last > gst::ClockTime::from_nseconds((after + length).as_nanos() as u64),
+        "no mix audio after the stall (last at {mix_last})"
+    );
 }
