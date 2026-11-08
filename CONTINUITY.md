@@ -622,6 +622,13 @@ track -13.5 dB, the mix -10.5 dB (both), an edit of it -10.5 dB (not
 doubled). Clips saved before this keep the mic on track 2 only; render
 an edit to hear it. Not yet run on Windows.
 
+**v1.1.5 prepared** with it on `claude/new-session-kuipn1` (one PR: the
+fix, then the version bump and `docs/release-notes/v1.1.5.md`). After it
+merges: tag `v1.1.5` on `main`'s merge commit, check the Windows build
+log says all required elements load from the bundle, then publish the
+draft. Worth a Windows recording with game audio and a mic before
+publishing: the live mixer is the one part no Windows machine has run.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner
