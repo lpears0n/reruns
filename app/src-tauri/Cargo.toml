@@ -25,7 +25,7 @@ tracing-subscriber.workspace = true
 tokio.workspace = true
 tauri-plugin-dialog = "2"
 trash = "5"
-clip-ipc = { version = "1.1.4", path = "../../crates/clip-ipc" }
+clip-ipc = { version = "1.1.5", path = "../../crates/clip-ipc" }
 tauri-plugin-window-state = "2"
 notify-debouncer-full = "0.5"
 tauri-plugin-updater = "2"

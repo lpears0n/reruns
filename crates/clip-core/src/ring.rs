@@ -188,6 +188,9 @@ pub struct ReplayBuffer {
     window: gst::ClockTime,
     pub video: Track,
     pub audio: Vec<Track>,
+    /// `audio[0]` is every source mixed into one track (see
+    /// [`ReplayBuffer::with_mix`]).
+    mix_first: bool,
 }
 
 impl ReplayBuffer {
@@ -196,7 +199,15 @@ impl ReplayBuffer {
             window,
             video: Track::default(),
             audio: (0..audio_tracks).map(|_| Track::default()).collect(),
+            mix_first: false,
         }
+    }
+
+    /// Mark `audio[0]` as the sources mixed into one track, so clips can
+    /// say whether they start with it ([`Clip::mixed`]).
+    pub fn with_mix(mut self) -> Self {
+        self.mix_first = true;
+        self
     }
 
     pub fn window(&self) -> gst::ClockTime {
@@ -275,19 +286,26 @@ impl ReplayBuffer {
             caps,
             buffers: rebase(video.packets.range(start_idx..), start, end),
         };
+        let mut mixed = false;
         let audio = self
             .audio
             .iter()
-            .filter_map(|t| {
+            .enumerate()
+            .filter_map(|(i, t)| {
                 let caps = t.caps.clone()?;
                 let buffers = rebase(t.packets.iter(), start, end);
-                (!buffers.is_empty()).then_some(ClipTrack { caps, buffers })
+                if buffers.is_empty() {
+                    return None;
+                }
+                mixed |= i == 0 && self.mix_first;
+                Some(ClipTrack { caps, buffers })
             })
             .collect();
 
         Ok(Clip {
             video: video_track,
             audio,
+            mixed,
             duration: end - start,
             start,
         })
@@ -318,6 +336,9 @@ fn rebase<'a>(
 pub struct Clip {
     pub video: ClipTrack,
     pub audio: Vec<ClipTrack>,
+    /// `audio[0]` is the sources mixed into one track; the sources' own
+    /// tracks follow it.
+    pub mixed: bool,
     pub duration: gst::ClockTime,
     /// Where the clip began on the recording's (running-time) timeline,
     /// before its timestamps were rebased to 0.
@@ -359,6 +380,43 @@ mod tests {
 
     fn pts_ms(b: &gst::Buffer) -> u64 {
         b.pts().unwrap().mseconds()
+    }
+
+    /// A clip only says it starts with the mix when the mix track made it
+    /// into the clip: with it missing, the first audio track is a source's
+    /// own, and the editor and export must treat it as one.
+    #[test]
+    fn clip_starts_with_the_mix_only_if_it_has_one() {
+        crate::init().unwrap();
+        let caps = || gst::Caps::new_empty_simple("audio/mpeg");
+        let mut buf = ReplayBuffer::new(ms(10_000), 2).with_mix();
+        buf.video
+            .set_caps(gst::Caps::new_empty_simple("video/x-h264"));
+        fill_video(&mut buf, 0, 2000);
+        buf.audio[1].set_caps(caps());
+        for t in (0..2000).step_by(20) {
+            buf.push_audio(1, packet(t, 20, true));
+        }
+        let clip = buf.snapshot(ms(10_000)).unwrap();
+        assert_eq!(clip.audio.len(), 1);
+        assert!(!clip.mixed, "no mix track: the first is a source's own");
+
+        buf.audio[0].set_caps(caps());
+        for t in (0..2000).step_by(20) {
+            buf.push_audio(0, packet(t, 20, true));
+        }
+        let clip = buf.snapshot(ms(10_000)).unwrap();
+        assert_eq!(clip.audio.len(), 2);
+        assert!(clip.mixed);
+        // A buffer that was never marked has no mix.
+        let mut plain = ReplayBuffer::new(ms(10_000), 1);
+        plain
+            .video
+            .set_caps(gst::Caps::new_empty_simple("video/x-h264"));
+        fill_video(&mut plain, 0, 1000);
+        plain.audio[0].set_caps(caps());
+        plain.push_audio(0, packet(0, 20, true));
+        assert!(!plain.snapshot(ms(10_000)).unwrap().mixed);
     }
 
     /// The three ways an audio track can look when a clip is saved: never

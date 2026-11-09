@@ -170,9 +170,12 @@
     end = untrack(() => clip.duration) ?? 0
   })
 
-  // Track count can arrive later (thumbnail pool); keep one level per track.
+  // Track count can arrive later (thumbnail pool); keep one level per
+  // source track. A clip that starts with game and mic mixed into one has
+  // a level for each of the tracks after it, not for the mix.
+  const sourceTracks = $derived(Math.max(0, clip.audio_tracks - (clip.mixed_audio ? 1 : 0)))
   $effect(() => {
-    if (levels.length !== clip.audio_tracks) levels = Array.from({ length: clip.audio_tracks }, () => 100)
+    if (levels.length !== sourceTracks) levels = Array.from({ length: sourceTracks }, () => 100)
   })
 
   function loaded() {
@@ -422,10 +425,11 @@
     ['?', 'This list'],
   ]
 
-  // The <video> element plays the first audio track; mirror its level when trimming.
+  // The <video> element plays the first audio track; mirror its level when
+  // trimming, unless that track is the mix (no one level applies to it).
   $effect(() => {
     if (!video) return
-    video.volume = trimming ? Math.min(1, (levels[0] ?? 100) / 100) : volume
+    video.volume = trimming && !clip.mixed_audio ? Math.min(1, (levels[0] ?? 100) / 100) : volume
     video.muted = muted
   })
 

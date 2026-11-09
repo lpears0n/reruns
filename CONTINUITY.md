@@ -601,6 +601,38 @@ elements load from the bundle, then publish the draft.
 - Start-up update check runs at once (was 20 s), retries 1/2/4… min after
   a failure, and the page asks `found_update` once listening.
 
+## Mic missing from clips (2026-11-08)
+User report from another Windows PC ("my girlfriend's mic isn't
+recording", log on 1.1.3–1.1.4): the mic *was* captured (packets on
+every recording, no "left out" warning), but as a second audio track,
+and players, Discord and the app's own viewer (WebView `<video>`) play
+only the first. Only rendered edits mixed the tracks. Now, with more than
+one source, `Pipeline::build` tees each source (`audio::add_audio_source`)
+into its own AAC track (`add_aac_branch`) and into a live `audiomixer`
+(`add_audio_mix`) whose track comes first; the mixer's inputs and output
+sit behind leaky queues, so a stall there drops mix audio, never the
+sources'. `ReplayBuffer::with_mix` / `Clip::mixed` → `SavedClip::
+mixed_audio` → sidecar `mixed_audio`; the viewer shows levels for the
+source tracks only, `render_clip` gives the mix a level of 0, and an
+edit's copied sidecar clears the flag. Mixing at save time was measured
+first and rejected: 5–9 s per 5-minute clip on 4 cores (avenc_aac's
+two-loop coder alone is ~8 s), against one more real-time encoder.
+`tests/save.rs` runs two live tones through the real branches: each
+track -13.5 dB, the mix -10.5 dB (both), an edit of it -10.5 dB (not
+doubled). `a_stalled_mixer_never_holds_up_the_source_tracks` holds the
+mixer's output thread for 2 s (4× the queues): game and mic tracks keep
+21 ms packet steps, the mix drops ~0.8 s and resumes; with the mixer's
+input queues made blocking, the game track gets a ~300 ms hole and the
+test fails. Clips saved before this keep the mic on track 2 only; render
+an edit to hear it. Not yet run on Windows.
+
+**v1.1.5 prepared** with it on `claude/new-session-kuipn1` (one PR: the
+fix, then the version bump and `docs/release-notes/v1.1.5.md`). After it
+merges: tag `v1.1.5` on `main`'s merge commit, check the Windows build
+log says all required elements load from the bundle, then publish the
+draft. Worth a Windows recording with game audio and a mic before
+publishing: the live mixer is the one part no Windows machine has run.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner

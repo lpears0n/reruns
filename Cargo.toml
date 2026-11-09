@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/clip-core", "crates/clip-ipc", "crates/clip-cli", "app/src-tauri"]
 
 [workspace.package]
-version = "1.1.4"
+version = "1.1.5"
 edition = "2024"
 license = "GPL-3.0-or-later"
 

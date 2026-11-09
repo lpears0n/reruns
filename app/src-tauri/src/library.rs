@@ -34,6 +34,10 @@ pub struct Clip {
     pub labels: Vec<String>,
     /// Moments marked while recording, in seconds from the start.
     pub markers: Vec<f64>,
+    /// The first audio track is game and mic mixed (what players play);
+    /// the sources' own tracks follow it, and are what the editor's levels
+    /// set.
+    pub mixed_audio: bool,
 }
 
 /// Saved next to each clip as `<clip>.mp4.json`. The folder stays the
@@ -52,6 +56,10 @@ pub struct ClipMeta {
     /// Moments marked with the marker hotkey, in seconds from the start.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<f64>,
+    /// The first audio track is every source mixed into one; the sources'
+    /// own tracks follow (recordings with game audio and a mic).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub mixed_audio: bool,
 }
 
 /// What the UI may change on a clip; `None` leaves a field alone.
@@ -157,6 +165,8 @@ pub fn update_meta(clips_dir: &Path, path: &Path, patch: MetaPatch) -> Result<Cl
 pub fn copy_meta(from: &Path, to: &Path, start: f64, end: f64) {
     if let Some(mut m) = read_meta(from) {
         m.markers = trim_markers(&m.markers, start, end);
+        // An edit has one audio track, already mixed at the chosen levels.
+        m.mixed_audio = false;
         let _ = write_meta(to, &m);
     }
 }
@@ -326,6 +336,7 @@ pub fn load(path: &Path, game: &str) -> Result<Clip> {
         favorite: user.favorite,
         labels: user.labels,
         markers: user.markers,
+        mixed_audio: user.mixed_audio,
     })
 }
 
@@ -458,6 +469,7 @@ mod tests {
         let m = ClipMeta {
             game: "Hades".into(),
             markers: vec![3.0, 8.0],
+            mixed_audio: true,
             ..Default::default()
         };
         write_meta(&src, &m).unwrap();
@@ -465,6 +477,12 @@ mod tests {
         let copied = read_meta(&out).unwrap();
         assert_eq!(copied.game, "Hades");
         assert_eq!(copied.markers, [1.0]);
+        // The recording starts with game and mic mixed; an edit has one
+        // track, already mixed.
+        std::fs::write(&src, b"x").unwrap();
+        clip_core::init().unwrap(); // `load` asks GStreamer for the image format
+        assert!(load(&src, "Hades").unwrap().mixed_audio);
+        assert!(!copied.mixed_audio);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

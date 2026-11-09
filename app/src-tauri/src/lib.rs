@@ -606,6 +606,13 @@ async fn render_clip(
             *state.encoder.get_or_init(|| e)
         }
     };
+    // The page's levels are for the sources' own tracks. A clip that
+    // starts with them mixed into one leaves that track out (at 0), or the
+    // export would play everything twice.
+    let mut volumes = volumes;
+    if library::read_meta(&path).is_some_and(|m| m.mixed_audio) {
+        volumes.insert(0, 0.0);
+    }
     let edit = Edit {
         start: clip_core::gst::ClockTime::from_nseconds((start.max(0.0) * 1e9) as u64),
         end: clip_core::gst::ClockTime::from_nseconds((end.max(0.0) * 1e9) as u64),
