@@ -34,7 +34,7 @@ pub fn partial_path(path: &Path) -> PathBuf {
 pub fn finish_partial(path: &Path, result: Result<()>) -> Result<()> {
     let partial = partial_path(path);
     if let Err(e) = result {
-        let _ = std::fs::remove_file(&partial);
+        discard(&partial);
         return Err(e);
     }
     rename_retrying(&partial, path).with_context(|| {
@@ -46,18 +46,47 @@ pub fn finish_partial(path: &Path, result: Result<()>) -> Result<()> {
     })
 }
 
-/// How long a rename keeps trying while Windows reports the file busy.
-const RENAME_PATIENCE: Duration = Duration::from_secs(5);
+/// Remove a file that won't be finished, waiting out a process that has
+/// it open for now (see [`remove_retrying`]). One still held after that is
+/// left behind, with a warning.
+pub(crate) fn discard(path: &Path) {
+    if let Err(e) = remove_retrying(path) {
+        tracing::warn!(path = %path.display(), "couldn't remove an unfinished file: {e}");
+    }
+}
+
+/// How long a rename or removal keeps trying while Windows reports the
+/// file busy.
+const BUSY_PATIENCE: Duration = Duration::from_secs(5);
 
 /// `std::fs::rename`, replacing `to`. On Windows a file that was just
 /// written is often held open for a moment by antivirus or the search
 /// indexer, which fails a rename (not a write) with a sharing violation;
 /// those are retried for a few seconds.
 pub fn rename_retrying(from: &Path, to: &Path) -> std::io::Result<()> {
-    let deadline = Instant::now() + RENAME_PATIENCE;
+    retry_busy(|| std::fs::rename(from, to))
+}
+
+/// `std::fs::remove_file`, retried like [`rename_retrying`]: deleting is
+/// refused the same way while another process has the file open. Besides
+/// antivirus, that includes any process started while GStreamer had the
+/// file open: it opens files through the C runtime, whose handles are
+/// inherited, so the child holds the file until it exits. A file that
+/// isn't there counts as removed.
+pub fn remove_retrying(path: &Path) -> std::io::Result<()> {
+    match retry_busy(|| std::fs::remove_file(path)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+/// Run `op` until it succeeds, fails for another reason, or the file has
+/// been busy for [`BUSY_PATIENCE`].
+fn retry_busy(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    let deadline = Instant::now() + BUSY_PATIENCE;
     let mut wait = Duration::from_millis(10);
     loop {
-        match std::fs::rename(from, to) {
+        match op() {
             Err(e) if busy(&e) && Instant::now() < deadline => {
                 std::thread::sleep(wait);
                 wait = (wait * 2).min(Duration::from_millis(500));

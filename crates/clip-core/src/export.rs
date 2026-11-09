@@ -378,7 +378,7 @@ pub fn render_with(
         }
         plan.video_kbps = scaled as u32;
     }
-    let _ = std::fs::remove_file(&partial);
+    crate::save::discard(&partial);
     bail!("couldn't fit in {}; trim it shorter", mb(max_bytes))
 }
 
@@ -582,7 +582,7 @@ fn render_once(
         None => result,
     };
     if result.is_err() {
-        let _ = std::fs::remove_file(output);
+        crate::save::discard(output);
     }
     result
 }

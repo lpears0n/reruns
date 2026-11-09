@@ -99,6 +99,23 @@ fn ffprobe(path: &Path, entries: &str) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
+/// Remove a test's folder. An ffprobe or ffmpeg that another test starts
+/// while one of this test's pipelines has a file open inherits a handle to
+/// it (GStreamer opens files through the C runtime, whose handles are
+/// inherited), and on Windows the file can't be deleted until that process
+/// exits; so a folder that won't go is retried for a few seconds.
+fn remove_test_dir(dir: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            result => return result.unwrap(),
+        }
+    }
+}
+
 #[test]
 fn saves_last_n_seconds_as_mp4() {
     let ring = fill_ring(8, 5);
@@ -175,7 +192,7 @@ fn saves_last_n_seconds_as_mp4() {
         "edited duration {duration}"
     );
 
-    std::fs::remove_dir_all(dir).unwrap();
+    remove_test_dir(&dir);
 }
 
 /// A size-limited export lands under the limit, scaled down and at 30 fps
@@ -266,7 +283,7 @@ fn fits_an_export_under_a_size_limit() {
     assert!(err.starts_with("too long for 20 kB"), "{err}");
     assert!(!dir.join("no.mp4").exists());
 
-    std::fs::remove_dir_all(dir).unwrap();
+    remove_test_dir(&dir);
 }
 
 /// Vertical 9:16 with a 2x slow-motion range: the picture is the cropped
@@ -339,7 +356,7 @@ fn renders_vertical_with_slow_motion() {
         "video lasts {video_secs}"
     );
 
-    std::fs::remove_dir_all(dir).unwrap();
+    remove_test_dir(&dir);
 }
 
 /// Every codec the machine can hardware-encode survives ring → MP4.
@@ -439,7 +456,7 @@ fn screenshot_is_the_newest_frame_as_png() {
     // The ring itself is untouched: a clip can still be saved after.
     let clip = ring.snapshot(gst::ClockTime::from_seconds(2)).unwrap();
     write_mp4(&clip, &dir.join("after.mp4")).unwrap();
-    std::fs::remove_dir_all(&dir).unwrap();
+    remove_test_dir(&dir);
 }
 
 /// Loudness of audio track `n` (0-based) of `path`: ffmpeg's mean volume,
@@ -633,7 +650,7 @@ fn mixes_game_and_mic_into_the_first_audio_track() {
     let both = mean_volume(&edited, 0);
     eprintln!("edit mean volume: {both} dB");
     assert!((both - mix).abs() < 1.5, "edit {both} dB, mix {mix} dB");
-    std::fs::remove_dir_all(dir).unwrap();
+    remove_test_dir(&dir);
 }
 
 /// The longest step between consecutive packets of `track`.
