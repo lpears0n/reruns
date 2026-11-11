@@ -708,6 +708,35 @@ behaves changed.
     made-up capture (`-PresentsCsv <file>`); a live trace hasn't been run
     (this needs elevation), so the `--v1_metrics` column names and the
     `--terminate_existing_session` stop are still to be seen working.
+- **First runs and what the clips say (2026-11-10 night):** only two
+  `compat` runs in Deadlock, no PresentMon (terminal not elevated), so
+  no comparison between paths yet. Findings from them and the older
+  clips:
+  - **The analyzer over-counted slow scenes.** In a clip with little
+    motion (Deadlock: median picture difference 0.25–0.66 of 255)
+    ordinary frames dip under the "same picture" threshold. A short
+    freeze now counts only with clear motion (difference ≥ 0.5) on both
+    sides; the rest are reported as "not counted" with the share of the
+    clip that could be judged. Rescored: the old Deadlock clips fall
+    from 22–27% to 0.4–3.9% (only 4–41% of them judgeable), tonight's
+    45 s clip from 7.6% to 2.0%, R6S 5.1% → 4.7%, DBD 8.9% → 7.5%. The
+    earlier baseline numbers in this file are from before this rule.
+  - **Freezes come on a steady rhythm of about five a second** in the
+    clips with real motion: R6S 190 ms, DBD 197 ms (the period noted on
+    2026-11-07), Deadlock tonight 227 ms; strength 0.45–0.58 against
+    0.15–0.17 by chance. Two games, same rhythm: it is the capture side,
+    not the games.
+  - **The capture source runs fast:** 61–69 frames a second for the 60
+    asked for in every HDR-compatibility session, and `videorate` drops
+    the extra. Tonight's clip: 64.65 fps, which beats against 60 every
+    215 ms; its freezes came every 227 ms. Likely cause, not proven: the
+    source wakes early, grabs twice in one frame slot, gets nothing new
+    the second time and re-sends the old picture. To prove: make the
+    source keep to 60 and see whether the rhythm goes.
+  - **Live counters over a 39-minute Deadlock session** (the test build,
+    after the runs): 6.6% by the size guess, 9,319 repeats in 4,832
+    freezes, 35 missing frames in 32 holes, 37 frame-queue overruns. So
+    the queue does drop, rarely; repeats are the bulk.
 - **Next:** A/B the three Windows capture paths (HDR compatibility,
   plain window capture, "Capture the window in HDR") on the same scene
   with PresentMon, then try fixes one at a time, keeping only what the

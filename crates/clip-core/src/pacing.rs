@@ -266,6 +266,13 @@ pub struct Report {
     /// same clip, to check the guess against `totals`. `None` if the file
     /// isn't MP4.
     pub packets: Option<Totals>,
+    /// Frames that looked unchanged in a slow scene: too little was moving
+    /// around them to tell a repeat from a picture that barely changed.
+    /// Not counted as judder.
+    pub unclear: u64,
+    /// Share of the clip's frames, in percent, with motion clear enough
+    /// to judge. A low number means the score says little.
+    pub clear_motion_percent: f64,
 }
 
 /// Size the pictures are compared at: small enough to be quick, wide
@@ -278,6 +285,44 @@ const PROBE_HEIGHT: usize = 144;
 /// the slowest real motion measured was well over 0.5.
 const SAME_PICTURE: f64 = 0.1;
 
+/// A short freeze counts only when the pictures on both sides of it
+/// differ by at least this much: in a slow scene (the owner's Deadlock
+/// clips: a median difference of 0.25–0.66) ordinary frames dip under
+/// [`SAME_PICTURE`] and would be taken for repeats.
+const CLEAR_MOTION: f64 = 0.5;
+
+/// Which frames repeat the one before, from each frame's difference to
+/// it (`f64::INFINITY` for the first). Short runs of unchanged pictures
+/// without clear motion on both sides are left out and counted, as the
+/// second value; runs longer than `max_run` frames are still scenes and
+/// are kept for [`Tally`] to sort out.
+fn judge(differences: &[f64], max_run: usize) -> (Vec<bool>, u64) {
+    let mut still: Vec<bool> = differences.iter().map(|&d| d < SAME_PICTURE).collect();
+    let clear = |i: usize| {
+        differences
+            .get(i)
+            .is_some_and(|d| d.is_finite() && *d >= CLEAR_MOTION)
+    };
+    let mut unclear = 0;
+    let mut i = 0;
+    while i < still.len() {
+        if !still[i] {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < still.len() && still[i] {
+            i += 1;
+        }
+        let moving = start > 0 && clear(start - 1) && clear(i);
+        if i - start <= max_run && !moving {
+            still[start..i].fill(false);
+            unclear += (i - start) as u64;
+        }
+    }
+    (still, unclear)
+}
+
 /// Measure a saved clip's pacing: decode every frame, compare each with
 /// the one before, and count repeats and holes.
 pub fn analyze(path: &Path) -> Result<Report> {
@@ -287,11 +332,15 @@ pub fn analyze(path: &Path) -> Result<Report> {
     }
     let fps = usual_fps(frames.iter().map(|f| f.0));
     let start = frames[0].0;
+    let differences: Vec<f64> = frames.iter().map(|f| f.1).collect();
+    let max_run = (MAX_REPEAT_NS as f64 * fps / 1e9) as usize;
+    let (still, unclear) = judge(&differences, max_run);
     let mut tally = Tally::new(fps);
-    for &(pts, still) in &frames {
+    for (&(pts, _), &still) in frames.iter().zip(&still) {
         tally.frame(pts - start, still);
     }
     let totals = tally.finish();
+    let clear = differences.iter().filter(|&&d| d >= CLEAR_MOTION).count();
     let packets = packets(path).ok().filter(|p| p.len() >= 2).map(|p| {
         let start = p[0].0;
         let mut monitor = PacketMonitor::new(fps);
@@ -305,6 +354,8 @@ pub fn analyze(path: &Path) -> Result<Report> {
         totals,
         events: tally.events().copied().collect(),
         packets,
+        unclear,
+        clear_motion_percent: clear as f64 * 100.0 / frames.len() as f64,
     })
 }
 
@@ -328,7 +379,7 @@ pub fn size_shares(path: &Path) -> Result<Vec<(f64, bool)>> {
         .iter()
         .zip(&packets)
         .filter(|(_, p)| !p.2)
-        .map(|(f, p)| (p.1 as f64 / median.max(1.0), f.1))
+        .map(|(f, p)| (p.1 as f64 / median.max(1.0), f.1 < SAME_PICTURE))
         .collect())
 }
 
@@ -347,8 +398,9 @@ fn usual_fps(pts: impl Iterator<Item = u64>) -> f64 {
     1e9 / steps[steps.len() / 2] as f64
 }
 
-/// Every frame's timestamp and whether its picture equals the one before.
-fn decoded_frames(path: &Path) -> Result<Vec<(u64, bool)>> {
+/// Every frame's timestamp and how much its picture differs from the one
+/// before (mean per pixel, of 255; infinite for the first frame).
+fn decoded_frames(path: &Path) -> Result<Vec<(u64, f64)>> {
     let uri = gst::glib::filename_to_uri(path, None)?;
     let pipeline = gst::parse::launch(&format!(
         "uridecodebin uri=\"{uri}\" ! videoconvert ! videoscale \
@@ -373,10 +425,10 @@ fn decoded_frames(path: &Path) -> Result<Vec<(u64, bool)>> {
             let Some(pts) = buffer.pts() else { continue };
             let map = buffer.map_readable()?;
             let picture = luma(map.as_slice());
-            let still = previous
+            let difference = previous
                 .as_deref()
-                .is_some_and(|p| mean_difference(p, &picture) < SAME_PICTURE);
-            frames.push((pts.nseconds(), still));
+                .map_or(f64::INFINITY, |p| mean_difference(p, &picture));
+            frames.push((pts.nseconds(), difference));
             previous = Some(picture);
         }
         Ok(frames)
@@ -601,6 +653,29 @@ mod tests {
         let totals = monitor.finish();
         assert_eq!((totals.repeat_runs, totals.repeated), (1, 3), "{totals:?}");
         assert_eq!(totals.still, 0);
+    }
+
+    #[test]
+    fn freezes_count_only_with_clear_motion_around_them() {
+        let inf = f64::INFINITY;
+        // Fast motion, a two-frame freeze, fast motion again.
+        let fast = [inf, 3.0, 3.0, 0.01, 0.02, 3.0, 3.0];
+        assert_eq!(
+            judge(&fast, 15),
+            (vec![false, false, false, true, true, false, false], 0)
+        );
+        // A slow scene: frames dip under the threshold on their own.
+        let slow = [inf, 0.2, 0.3, 0.05, 0.2, 0.08, 0.3];
+        assert_eq!(judge(&slow, 15), (vec![false; 7], 2));
+        // Motion on one side only (the clip starts or ends in the freeze).
+        let edge = [inf, 0.01, 0.01, 3.0, 3.0, 0.02];
+        assert_eq!(judge(&edge, 15), (vec![false; 6], 3));
+        // A scene that stood still is left for the tally, slow or not.
+        let menu = [inf, 0.2, 0.0, 0.0, 0.0, 0.0, 0.2];
+        assert_eq!(
+            judge(&menu, 3),
+            (vec![false, false, true, true, true, true, false], 0)
+        );
     }
 
     #[test]

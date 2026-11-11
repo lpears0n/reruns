@@ -33,6 +33,13 @@ fn print(path: &std::path::Path, r: &Report) {
         t.still,
         t.pauses,
     );
+    if r.unclear > 0 || r.clear_motion_percent < 50.0 {
+        println!(
+            "  {:.0}% of the clip had motion clear enough to judge; {} unchanged-looking frames \
+             in slow scenes were not counted",
+            r.clear_motion_percent, r.unclear,
+        );
+    }
     if let Some(p) = &r.packets {
         println!(
             "  recorder's guess from packet sizes: {:.2}%  ({} repeated in {} freezes; \
