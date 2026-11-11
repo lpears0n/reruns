@@ -22,6 +22,7 @@ use crate::{
     pacing::PacketMonitor,
     ring::{ReplayBuffer, running_time_buffer},
     save::write_mp4,
+    timer::PreciseTimer,
 };
 #[cfg(target_os = "linux")]
 use crate::{capture::PipewireTarget, kwin::KwinStream, portal::ScreenSource};
@@ -284,6 +285,8 @@ pub struct Recorder {
     audio_names: Vec<&'static str>,
     error: Arc<Mutex<Option<String>>>,
     pacing: Arc<Pacing>,
+    /// Frame-accurate sleeps for the capture source, while this lives.
+    _timer: PreciseTimer,
     stop: Arc<AtomicBool>,
     bus_thread: Option<JoinHandle<()>>,
     // Dropped last: pipewiresrc borrows its fd.
@@ -364,6 +367,7 @@ impl Recorder {
                 audio_names: audio_track_names(&cfg.audio),
                 error: built.error,
                 pacing: built.pacing,
+                _timer: built.timer,
                 stop: built.stop,
                 bus_thread: Some(built.bus_thread),
                 source: Some(source),
@@ -663,6 +667,7 @@ struct Pipeline {
     buffer: Arc<Mutex<ReplayBuffer>>,
     error: Arc<Mutex<Option<String>>>,
     pacing: Arc<Pacing>,
+    timer: PreciseTimer,
     stop: Arc<AtomicBool>,
     bus_thread: JoinHandle<()>,
 }
@@ -675,6 +680,8 @@ impl Pipeline {
         path: CapturePath,
     ) -> Result<Self> {
         let window = gst::ClockTime::from_seconds(cfg.replay_seconds.into());
+        // Before the source starts: it paces itself by sleeping.
+        let timer = PreciseTimer::hold();
         let pipeline = gst::Pipeline::new();
         // Audio tracks in clip order: with more than one source, all of them
         // mixed into one first (players only play the first audio track),
@@ -753,6 +760,7 @@ impl Pipeline {
             buffer,
             error,
             pacing,
+            timer,
             stop,
             bus_thread,
         })

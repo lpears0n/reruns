@@ -737,6 +737,29 @@ behaves changed.
     after the runs): 6.6% by the size guess, 9,319 repeats in 4,832
     freezes, 35 missing frames in 32 holes, 37 frame-queue overruns. So
     the queue does drop, rarely; repeats are the bulk.
+- **Cause found and fixed (2026-11-11): Windows' timer.** GStreamer's
+  screen capture sources (`d3d12screencapturesrc`, `d3d11screencapturesrc`)
+  sleep on the pipeline clock until the next frame slot, compute the
+  slot from the time they wake, and capture at once when the slot isn't
+  the last one they did. GStreamer never raises Windows' timer
+  resolution (`gstsystemclock.c` waits on a GLib condition variable), so
+  sleeps end on the 15.6 ms system tick, 64 a second; and Windows 11
+  ignores a process's own request for finer ticks while it has no
+  visible window (Reruns in the tray). On a 64 Hz tick the 60 fps source
+  wakes late, lands in the next slot, and grabs again straight away;
+  Desktop Duplication has nothing new for the second grab and the old
+  picture goes out again. Hence 61–69 fps from the source and a freeze
+  rhythm near the 64-against-60 beat.
+  `clip_core::timer::PreciseTimer` (held by every capture pipeline)
+  calls `timeBeginPeriod(1)` and `SetProcessInformation(
+  ProcessPowerThrottling)` with the execution-speed and
+  ignore-timer-resolution bits controlled and off, and undoes both when
+  the last pipeline goes. Measured here by `tests/capture_rate.rs`
+  (desktop duplication into a fakesink, 5 s): default timer 67.44 fps
+  with 42 second grabs in a slot (the very rate the owner's sessions
+  logged); with the timer held 60.01 fps and none. Not yet seen: a clip
+  from a game with the fix (the next sessions' `video pacing` line
+  should show `source_fps` at 60 and `dropped` near 0).
 - **Next:** A/B the three Windows capture paths (HDR compatibility,
   plain window capture, "Capture the window in HDR") on the same scene
   with PresentMon, then try fixes one at a time, keeping only what the

@@ -16,6 +16,7 @@ pub mod ring;
 pub mod save;
 pub mod screenshot;
 pub mod sound;
+pub mod timer;
 pub mod tonemap;
 
 // Linux: Wayland compositors (KWin direct, or the screen-cast portal),
