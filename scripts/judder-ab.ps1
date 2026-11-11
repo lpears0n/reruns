@@ -14,6 +14,13 @@
 #                           node_modules\.bin\tauri build --no-bundle --config '{\"build\":{\"beforeBuildCommand\":\"\"}}'
 #                           cargo build --release -p clip-core --example judder
 #
+# With PresentMon (Intel's frame-timing tool) at
+# target\tools\presentmon\PresentMon-*.exe and an administrator terminal,
+# each run also records when the game presented its frames. That tells a
+# picture the capture repeated from one the game never drew: "slots
+# without a new game frame" is the share of the clip's frame slots in
+# which the game presented nothing, which no capture can do better than.
+#
 # Results: target\judder-ab\ (one .txt and .log per run, summary.csv).
 # Works in Windows PowerShell 5.1 and PowerShell 7.
 
@@ -30,7 +37,9 @@ param(
     [int]$Seconds = 60,
     # Free text added to the result's name, e.g. the fix being tried.
     [string]$Label = '',
-    [switch]$Restore
+    [switch]$Restore,
+    # Summarize an existing PresentMon CSV (all of it) and exit.
+    [string]$PresentsCsv = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,6 +78,71 @@ function Use-Runtime([string]$which) {
     }
     # A registry of its own: the two runtimes must not share a plugin cache.
     $env:GST_REGISTRY = Join-Path $results "gst-registry-$which.bin"
+}
+
+# The newest PresentMon console build under target\tools, if any.
+function Find-PresentMon {
+    Get-ChildItem (Join-Path $repo 'target\tools\presentmon') -Filter 'PresentMon-*.exe' -ErrorAction SilentlyContinue |
+        Sort-Object Name | Select-Object -Last 1
+}
+
+function Test-Admin {
+    $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# The game's own frame pacing from a PresentMon CSV, between `$from` and
+# `$to` seconds into the capture: the process that presented most is
+# taken for the game. `$fps` is the clip's frame rate.
+function Measure-Presents([string]$csvPath, [double]$from, [double]$to, [int]$fps) {
+    $notGames = @('dwm.exe', 'reruns.exe', 'msedgewebview2.exe', 'explorer.exe')
+    $times = @{}
+    foreach ($row in (Import-Csv $csvPath)) {
+        $t = $row.TimeInSeconds
+        if ($null -eq $t) { $t = $row.CPUStartTime }
+        if ($null -eq $t) { continue }
+        $t = [double]::Parse($t, [Globalization.CultureInfo]::InvariantCulture)
+        if ($t -lt $from -or $t -gt $to) { continue }
+        $app = $row.Application
+        if ($notGames -contains $app.ToLowerInvariant()) { continue }
+        if (-not $times.ContainsKey($app)) { $times[$app] = New-Object 'System.Collections.Generic.List[double]' }
+        $times[$app].Add($t)
+    }
+    $game = $times.GetEnumerator() | Sort-Object { $_.Value.Count } | Select-Object -Last 1
+    if (-not $game -or $game.Value.Count -lt 2) { return $null }
+    $t = $game.Value.ToArray()
+    [Array]::Sort($t)
+    $span = $t[$t.Length - 1] - $t[0]
+    if ($span -le 0) { return $null }
+    # Frame slots of the clip in which the game presented nothing.
+    $slots = New-Object 'System.Collections.Generic.HashSet[long]'
+    $steps = New-Object 'System.Collections.Generic.List[double]'
+    for ($i = 0; $i -lt $t.Length; $i++) {
+        [void]$slots.Add([long][Math]::Floor(($t[$i] - $t[0]) * $fps))
+        if ($i -gt 0) { $steps.Add(($t[$i] - $t[$i - 1]) * 1000) }
+    }
+    $total = [long][Math]::Floor($span * $fps) + 1
+    $sorted = $steps.ToArray()
+    [Array]::Sort($sorted)
+    [pscustomobject]@{
+        Game       = $game.Key
+        Fps        = [Math]::Round(($t.Length - 1) / $span, 1)
+        # The frame time 99% of frames are under, as a rate.
+        Low1Fps    = [Math]::Round(1000 / $sorted[[int][Math]::Floor(($sorted.Length - 1) * 0.99)], 1)
+        LongestMs  = [Math]::Round($sorted[$sorted.Length - 1], 1)
+        EmptySlots = [Math]::Round(($total - $slots.Count) * 100.0 / $total, 2)
+    }
+}
+
+function Format-Presents($p, [int]$fps) {
+    if (-not $p) { return 'game frames: none recorded' }
+    "game frames ($($p.Game)): $($p.Fps) fps, 1% low $($p.Low1Fps) fps, longest frame $($p.LongestMs) ms; " +
+        "$($p.EmptySlots)% of $fps fps slots without a new game frame"
+}
+
+if ($PresentsCsv) {
+    Write-Host (Format-Presents (Measure-Presents $PresentsCsv 0 ([double]::MaxValue) 60) 60)
+    return
 }
 
 New-Item -ItemType Directory -Force $results | Out-Null
@@ -115,6 +189,23 @@ if (Test-Path $log) { $logStart = (Get-Item $log).Length }
 $started = Get-Date
 Start-Process -FilePath $exe -ArgumentList '--autostart' | Out-Null
 
+# The game's own frame times, alongside. Tracing needs administrator
+# rights; without them the run goes ahead with the clip's score alone.
+$presentMon = Find-PresentMon
+$presentCsv = $null
+$session = 'RerunsJudderAB'
+if ($presentMon -and (Test-Admin)) {
+    $presentCsv = Join-Path $results ('{0:yyyy-MM-dd_HH-mm-ss}_{1}_presents.csv' -f $started, $Path)
+    $presentArgs = @('--output_file', "`"$presentCsv`"", '--v1_metrics', '--no_console_stats',
+        '--session_name', $session, '--stop_existing_session')
+    Start-Process -FilePath $presentMon.FullName -ArgumentList $presentArgs -WindowStyle Hidden | Out-Null
+    $presentStarted = Get-Date
+} elseif ($presentMon) {
+    Write-Host "PresentMon needs an administrator terminal; recording without the game's frame times."
+} else {
+    Write-Host "No PresentMon under target\tools\presentmon; recording without the game's frame times."
+}
+
 Write-Host ""
 Write-Host "Recording through '$Path' on the $Runtime GStreamer."
 Write-Host "Go back to the game, play the same scene for at least $Seconds seconds,"
@@ -131,6 +222,20 @@ while (-not $clip) {
 }
 # The file is renamed into place when it is complete; give the log a moment.
 Start-Sleep -Seconds 2
+
+$presents = $null
+$presentLine = ''
+if ($presentCsv) {
+    & $presentMon.FullName --session_name $session --terminate_existing_session 2>&1 | Out-Null
+    Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($presentMon.Name)) -ErrorAction SilentlyContinue |
+        ForEach-Object { try { $_.WaitForExit(10000) | Out-Null } catch {} }
+    if (Test-Path $presentCsv) {
+        # The clip is the last `$Seconds` before it was written.
+        $end = ($clip.LastWriteTime - $presentStarted).TotalSeconds
+        $presents = Measure-Presents $presentCsv ($end - $Seconds - 1) $end ([int]$settings.fps)
+    }
+    $presentLine = Format-Presents $presents ([int]$settings.fps)
+}
 
 $name = '{0:yyyy-MM-dd_HH-mm-ss}_{1}_{2}' -f $started, $Path, $Runtime
 if ($Label) { $name = "$name`_$($Label -replace '[^\w.-]', '-')" }
@@ -154,7 +259,7 @@ $out = & $judder $clip.FullName 2>&1 | ForEach-Object { "$_" }
 $logLines = $logText -split "`r?`n" |
     Where-Object { $_ -match 'recorder started|clip pacing|frame pacing|video pacing|falling back|WARN|ERROR' }
 $text = @("path: $Path", "runtime: $Runtime", "label: $Label", "clip: $($clip.FullName)", '') +
-    $out + @('', '--- Reruns log ---') + $logLines
+    $out + @('', $presentLine, '', '--- Reruns log ---') + $logLines
 [IO.File]::WriteAllLines($report, [string[]]$text, $utf8)
 
 $score = ''
@@ -162,13 +267,17 @@ $summary = $out | Where-Object { $_ -match '^\s+([\d.]+)% judder' } | Select-Obj
 if ($summary -match '([\d.]+)% judder') { $score = $Matches[1] }
 $csv = Join-Path $results 'summary.csv'
 if (-not (Test-Path $csv)) {
-    [IO.File]::WriteAllText($csv, "time,path,runtime,label,judder_percent,clip`r`n", $utf8)
+    [IO.File]::WriteAllText($csv, "time,path,runtime,label,judder_percent,game_fps,slots_without_game_frame_percent,clip`r`n", $utf8)
 }
-$row = '{0:yyyy-MM-dd HH:mm:ss},{1},{2},"{3}",{4},"{5}"' -f $started, $Path, $Runtime, $Label, $score, $clip.FullName
+$gameFps = ''
+$emptySlots = ''
+if ($presents) { $gameFps = $presents.Fps; $emptySlots = $presents.EmptySlots }
+$row = '{0:yyyy-MM-dd HH:mm:ss},{1},{2},"{3}",{4},{5},{6},"{7}"' -f $started, $Path, $Runtime, $Label, $score, $gameFps, $emptySlots, $clip.FullName
 [IO.File]::AppendAllText($csv, "$row`r`n", $utf8)
 
 Write-Host ""
 $out | Select-Object -First 3 | ForEach-Object { Write-Host $_ }
+if ($presentLine) { Write-Host "  $presentLine" }
 $logLines | Where-Object { $_ -match 'recorder started' } | Select-Object -Last 1 | ForEach-Object { Write-Host $_ }
 Write-Host ""
 Write-Host "Saved to $report"

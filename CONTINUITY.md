@@ -699,8 +699,15 @@ behaves changed.
     '{"build":{"beforeBuildCommand":""}}'` from `app\`.
   - `video pacing` and `frame pacing` are now logged on every save too:
     a recording that ends without a clean stop left no totals.
-  - PresentMon isn't installed, so a run can't yet tell a capture repeat
-    from the game drawing under 60 fps.
+  - PresentMon 2.6.0 (Intel's console build, signature checked) is at
+    `target	ools\presentmon\` (not in git). From an administrator
+    terminal the script records the game's presents during a run and
+    reports its fps and the share of the clip's frame slots in which the
+    game presented nothing: the floor no capture can beat (a steady
+    45 fps game gives 25% at 60 fps). Its CSV summary is tested on a
+    made-up capture (`-PresentsCsv <file>`); a live trace hasn't been run
+    (this needs elevation), so the `--v1_metrics` column names and the
+    `--terminate_existing_session` stop are still to be seen working.
 - **Next:** A/B the three Windows capture paths (HDR compatibility,
   plain window capture, "Capture the window in HDR") on the same scene
   with PresentMon, then try fixes one at a time, keeping only what the
