@@ -678,6 +678,29 @@ behaves changed.
   identical; the test encodes at a fixed quantizer.
 - This PC had Smart App Control on, which blocked Cargo's build scripts
   (os error 4551); the owner turned it off on 2026-11-10.
+- **A/B harness: `scripts/judder-ab.ps1`.** One run per capture path
+  (`-Path compat | window | hdr-window`): stops any running Reruns,
+  backs up `settings.json` once and sets `hdr_compatibility`,
+  `hdr_window_capture` and `replay_seconds` (60 by default), starts
+  `target\release\reruns.exe` in the tray, waits for the clip saved with
+  the hotkey, scores it, and writes a report, the run's log and a row in
+  `target\judder-ab\summary.csv`. `-Restore` puts the settings back.
+  `-Runtime bundled` (default) runs on the installed Reruns' GStreamer
+  (1.26.9, what users get); `-Runtime dev` on the development install
+  (1.28.8). Checked without a game: the scorer and the app both run on
+  the bundled runtime, and the app began recording Deadlock. Not yet
+  done: a full run ending in a saved clip.
+  - A local `tauri build --no-bundle` leaves an **empty `gst-plugins`
+    folder beside `reruns.exe`**; the app then loads plugins only from
+    there and reports "no working H264 encoder found". The script
+    removes it when it holds no DLL.
+  - pnpm isn't on this PC: build with `node_modules\.bin\vite build`
+    then `node_modules\.bin\tauri build --no-bundle --config
+    '{"build":{"beforeBuildCommand":""}}'` from `app\`.
+  - `video pacing` and `frame pacing` are now logged on every save too:
+    a recording that ends without a clean stop left no totals.
+  - PresentMon isn't installed, so a run can't yet tell a capture repeat
+    from the game drawing under 60 fps.
 - **Next:** A/B the three Windows capture paths (HDR compatibility,
   plain window capture, "Capture the window in HDR") on the same scene
   with PresentMon, then try fixes one at a time, keeping only what the

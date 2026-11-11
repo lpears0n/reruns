@@ -463,6 +463,9 @@ impl Recorder {
         };
         self.log_audio(&audio_stats, Some((clip.start, clip.start + clip.duration)));
         self.pacing.log_clip(clip.start);
+        // The recording so far, too: one that ends without a clean stop
+        // (the app quit mid-game) would otherwise leave no totals.
+        self.log_pacing();
         let markers = markers_in(&self.marks.lock().unwrap(), clip.start, clip.duration);
         let path = path.to_owned();
         tokio::task::spawn_blocking(move || {
@@ -492,6 +495,30 @@ impl Recorder {
             Ok(path)
         })
         .await?
+    }
+
+    /// The recording so far: what `videorate` did to the source's frames,
+    /// and the repeats and holes it can't see.
+    fn log_pacing(&self) {
+        if let Some(rate) = self.pipeline.by_name("rate") {
+            let frames_in = rate.property::<u64>("in");
+            // What the source really delivers, against the rate asked for.
+            let source_fps = self
+                .pipeline
+                .current_running_time()
+                .filter(|t| !t.is_zero())
+                .map(|t| frames_in as f64 / t.seconds_f64());
+            tracing::info!(
+                frames_in,
+                out = rate.property::<u64>("out"),
+                duplicated = rate.property::<u64>("duplicate"),
+                dropped = rate.property::<u64>("drop"),
+                source_fps = source_fps.map(|f| (f * 100.0).round() / 100.0),
+                clock = ?self.pipeline.clock().map(|c| c.name()),
+                "video pacing"
+            );
+        }
+        self.pacing.log_session();
     }
 
     /// One line per audio track: what arrived and what is buffered. With
@@ -533,25 +560,7 @@ impl Recorder {
             .map(|t| t.stats())
             .collect();
         self.log_audio(&stats, None);
-        if let Some(rate) = self.pipeline.by_name("rate") {
-            let frames_in = rate.property::<u64>("in");
-            // What the source really delivers, against the rate asked for.
-            let source_fps = self
-                .pipeline
-                .current_running_time()
-                .filter(|t| !t.is_zero())
-                .map(|t| frames_in as f64 / t.seconds_f64());
-            tracing::info!(
-                frames_in,
-                out = rate.property::<u64>("out"),
-                duplicated = rate.property::<u64>("duplicate"),
-                dropped = rate.property::<u64>("drop"),
-                source_fps = source_fps.map(|f| (f * 100.0).round() / 100.0),
-                clock = ?self.pipeline.clock().map(|c| c.name()),
-                "video pacing"
-            );
-        }
-        self.pacing.log_session();
+        self.log_pacing();
         self.pipeline.set_state(gst::State::Null)?;
         release_capture(&self.pipeline);
         self.stop.store(true, Ordering::Relaxed);
