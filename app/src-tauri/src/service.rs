@@ -218,11 +218,14 @@ async fn run(
         tokio::select! {
             ev = events.recv() => {
                 let Some(ev) = ev else { break };
-                let changed = match auto.handle(ev).await {
+                let handled = auto.handle(ev).await;
+                // After every scan, not only a start or stop: a game that
+                // replaces its window keeps its session. And before the
+                // event below, whose popup checks this.
+                #[cfg(windows)]
+                crate::overlay::set_game(auto.window());
+                let changed = match handled {
                     Ok(Some(change)) => {
-                        // Before the event below: its popup checks this.
-                        #[cfg(windows)]
-                        crate::overlay::set_game(auto.window());
                         if let Change::Started(g) = &change {
                             let _ = app.emit(RECORDING_STARTED, &g.name);
                         }

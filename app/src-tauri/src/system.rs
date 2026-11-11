@@ -106,7 +106,12 @@ fn scaled_pcm16(wav: &[u8], volume_percent: u32) -> Option<Vec<u8>> {
         let id = &wav[at..at + 4];
         let len = u32::from_le_bytes(wav[at + 4..at + 8].try_into().ok()?) as usize;
         let body = at + 8;
-        let end = body.checked_add(len)?.min(wav.len());
+        // A chunk cut short (a damaged file) goes to the file player: the
+        // system's player would read past the end of the memory it is given.
+        let end = body.checked_add(len)?;
+        if end > wav.len() {
+            return None;
+        }
         if id == b"fmt " && len >= 16 {
             let format = u16::from_le_bytes(wav[body..body + 2].try_into().ok()?);
             let bits = u16::from_le_bytes(wav[body + 14..body + 16].try_into().ok()?);
@@ -418,6 +423,9 @@ mod tests {
     #[test]
     fn only_plain_16_bit_wavs_take_the_quick_path() {
         assert!(scaled_pcm16(b"ID3 not a wav at all", 100).is_none());
+        // Cut short inside the format chunk, and inside the samples.
+        assert!(scaled_pcm16(&SAVE_SOUND[..24], 100).is_none());
+        assert!(scaled_pcm16(&SAVE_SOUND[..SAVE_SOUND.len() - 2], 100).is_none());
         // The same file marked as 32-bit float (format 3).
         let mut float = SAVE_SOUND.to_vec();
         float[20] = 3;
