@@ -232,8 +232,10 @@ mod imp {
         // front of it. By process: a game may put another of its windows
         // in front. shortcut: a popup that arrives while the game is behind
         // is dropped, not shown later; queue it if "Recording" goes missing.
+        // Nor when nothing is recorded: the game closed while the first
+        // popup waited for its page.
         let game = GAME.load(Ordering::SeqCst);
-        if game != 0 && pid(fg) != pid(HWND(game as *mut _)) {
+        if game == 0 || pid(fg) != pid(HWND(game as *mut _)) {
             return;
         }
 
