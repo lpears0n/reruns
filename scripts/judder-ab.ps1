@@ -114,14 +114,17 @@ function Measure-Presents([string]$csvPath, [double]$from, [double]$to, [int]$fp
     [Array]::Sort($t)
     $span = $t[$t.Length - 1] - $t[0]
     if ($span -le 0) { return $null }
+    # Slots are counted over the whole window, so a game that stopped
+    # presenting at either end of it shows up as empty slots.
+    $from = [Math]::Max($from, 0)
     # Frame slots of the clip in which the game presented nothing.
     $slots = New-Object 'System.Collections.Generic.HashSet[long]'
     $steps = New-Object 'System.Collections.Generic.List[double]'
     for ($i = 0; $i -lt $t.Length; $i++) {
-        [void]$slots.Add([long][Math]::Floor(($t[$i] - $t[0]) * $fps))
+        [void]$slots.Add([long][Math]::Floor(($t[$i] - $from) * $fps))
         if ($i -gt 0) { $steps.Add(($t[$i] - $t[$i - 1]) * 1000) }
     }
-    $total = [long][Math]::Floor($span * $fps) + 1
+    $total = [long][Math]::Floor(($to - $from) * $fps) + 1
     $sorted = $steps.ToArray()
     [Array]::Sort($sorted)
     [pscustomobject]@{
@@ -213,20 +216,26 @@ Write-Host "then press the clip hotkey ($($settings.hotkey)). Waiting for the cl
 
 $clip = $null
 $deadline = $started.AddMinutes(30)
-while (-not $clip) {
-    if ((Get-Date) -gt $deadline) { throw "No clip was saved within 30 minutes." }
-    Start-Sleep -Seconds 1
-    $clip = Get-ChildItem -Path $clips -Recurse -Filter *.mp4 -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -gt $started } |
-        Sort-Object LastWriteTime | Select-Object -Last 1
+try {
+    while (-not $clip) {
+        if ((Get-Date) -gt $deadline) { throw "No clip was saved within 30 minutes." }
+        Start-Sleep -Seconds 1
+        $clip = Get-ChildItem -Path $clips -Recurse -Filter *.mp4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -gt $started } |
+            Sort-Object LastWriteTime | Select-Object -Last 1
+    }
+    # The file is renamed into place when it is complete; give the log a moment.
+    Start-Sleep -Seconds 2
+} finally {
+    # Also on the timeout or Ctrl+C: tracing must not outlive the script.
+    if ($presentCsv) {
+        & $presentMon.FullName --session_name $session --terminate_existing_session 2>&1 | Out-Null
+    }
 }
-# The file is renamed into place when it is complete; give the log a moment.
-Start-Sleep -Seconds 2
 
 $presents = $null
 $presentLine = ''
 if ($presentCsv) {
-    & $presentMon.FullName --session_name $session --terminate_existing_session 2>&1 | Out-Null
     Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($presentMon.Name)) -ErrorAction SilentlyContinue |
         ForEach-Object { try { $_.WaitForExit(10000) | Out-Null } catch {} }
     if (Test-Path $presentCsv) {

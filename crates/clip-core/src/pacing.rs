@@ -90,6 +90,8 @@ pub struct Tally {
     /// repeat, how many).
     run: Option<(u64, u32)>,
     events: VecDeque<Event>,
+    /// Pauses: (time of the last frame before, length).
+    pauses: VecDeque<(u64, u64)>,
 }
 
 impl Tally {
@@ -100,6 +102,7 @@ impl Tally {
             last_pts: None,
             run: None,
             events: VecDeque::new(),
+            pauses: VecDeque::new(),
         }
     }
 
@@ -110,6 +113,10 @@ impl Tally {
             let step = pts_ns.saturating_sub(last);
             if step > PAUSE_NS {
                 self.totals.pauses += 1;
+                if self.pauses.len() == MAX_EVENTS {
+                    self.pauses.pop_front();
+                }
+                self.pauses.push_back((last, step));
             } else if step > self.frame_ns * 3 / 2 {
                 let missing = ((step + self.frame_ns / 2) / self.frame_ns).saturating_sub(1);
                 self.totals.holes += 1;
@@ -169,7 +176,8 @@ impl Tally {
     }
 
     /// Repeats and holes from `start_ns` on: what a clip that starts there
-    /// contains. `frames` is estimated from the time covered.
+    /// contains. `frames` is estimated from the time covered, less the
+    /// pauses in it (no frames are expected there).
     pub fn since(&self, start_ns: u64) -> Totals {
         let mut t = Totals::default();
         for e in self.events.iter().filter(|e| e.at_ns() >= start_ns) {
@@ -185,7 +193,17 @@ impl Tally {
                 }
             }
         }
-        let covered = self.last_pts.unwrap_or(start_ns).saturating_sub(start_ns);
+        let paused: u64 = self
+            .pauses
+            .iter()
+            .filter(|p| p.0 >= start_ns)
+            .map(|p| p.1)
+            .sum();
+        let covered = self
+            .last_pts
+            .unwrap_or(start_ns)
+            .saturating_sub(start_ns)
+            .saturating_sub(paused);
         t.frames = (covered / self.frame_ns.max(1)).saturating_sub(t.missing);
         t
     }
@@ -383,7 +401,11 @@ pub fn size_shares(path: &Path) -> Result<Vec<(f64, bool)>> {
         .collect())
 }
 
-/// Frames per second from the median step between timestamps.
+/// Frames per second from a short step between timestamps: the tenth
+/// percentile, not the median, which a clip that dropped most of its
+/// frames would pass off as a lower frame rate with no holes. (A clip
+/// that dropped the same frames throughout can't be told from one
+/// recorded at that rate: the file's own rate comes from these steps.)
 fn usual_fps(pts: impl Iterator<Item = u64>) -> f64 {
     let pts: Vec<u64> = pts.collect();
     let mut steps: Vec<u64> = pts
@@ -395,13 +417,14 @@ fn usual_fps(pts: impl Iterator<Item = u64>) -> f64 {
         return 60.0;
     }
     steps.sort_unstable();
-    1e9 / steps[steps.len() / 2] as f64
+    1e9 / steps[steps.len() / 10] as f64
 }
 
 /// Every frame's timestamp and how much its picture differs from the one
 /// before (mean per pixel, of 255; infinite for the first frame).
 fn decoded_frames(path: &Path) -> Result<Vec<(u64, f64)>> {
-    let uri = gst::glib::filename_to_uri(path, None)?;
+    // A URI needs the whole path; one given on a command line may not be.
+    let uri = gst::glib::filename_to_uri(std::path::absolute(path)?, None)?;
     let pipeline = gst::parse::launch(&format!(
         "uridecodebin uri=\"{uri}\" ! videoconvert ! videoscale \
          ! video/x-raw,format=GRAY8,width={PROBE_WIDTH},height={PROBE_HEIGHT} \
@@ -591,6 +614,9 @@ mod tests {
         run(&mut tally, &mut t, 98, false);
         let totals = tally.finish();
         assert_eq!((totals.holes, totals.missing, totals.pauses), (1, 2, 1));
+        // A clip across the pause holds the frames around it, not the
+        // five seconds' worth nobody drew.
+        assert_eq!(tally.since(0).frames, 196);
         assert_eq!(
             tally.events().next(),
             Some(&Event::Hole {
@@ -682,6 +708,9 @@ mod tests {
     fn fps_comes_from_the_usual_step() {
         let pts = [0, FRAME, 2 * FRAME, 5 * FRAME, 6 * FRAME, 7 * FRAME];
         assert!((usual_fps(pts.into_iter()) - 60.0).abs() < 0.01);
+        // Most frames dropped: still 60, so the drops count as holes.
+        let pts = (0..40u64).map(|i| (i * 2 - u64::from(i % 4 == 0 && i > 0)) * FRAME);
+        assert!((usual_fps(pts) - 60.0).abs() < 0.01);
     }
 
     #[test]
