@@ -269,10 +269,15 @@ fn lock_size_at_first_caps(
     })
 }
 
+/// Name of the frame queue in front of the encoder, for the recorder to
+/// count what it drops.
+pub(crate) const FRAME_QUEUE: &str = "frames";
+
 /// The frame queue in front of the encoder: a few frames, dropping the
 /// oldest when the encoder falls behind rather than stalling capture.
 fn make_queue() -> Result<gst::Element> {
     Ok(gst::ElementFactory::make("queue")
+        .name(FRAME_QUEUE)
         .property("max-size-buffers", 4u32)
         .property("max-size-time", 0u64)
         .property("max-size-bytes", 0u32)

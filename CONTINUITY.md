@@ -633,6 +633,140 @@ log says all required elements load from the bundle, then publish the
 draft. Worth a Windows recording with game audio and a mic before
 publishing: the live mixer is the one part no Windows machine has run.
 
+## Smooth recording, step 1: measuring judder (2026-11-10, branch `smooth-capture`)
+
+The owner approved a seven-part improvement plan (recording smoothness
+first, then startup/memory/updates, sounds, the in-game popup, UI
+cleanup, features, mobile groundwork). This is its first piece: a way to
+measure judder before any capture change. Nothing about how recording
+behaves changed.
+
+- **`clip_core::pacing`**: `Tally` counts **repeats** (the same picture
+  again for up to 0.25 s; longer is a still scene) and **holes** (a
+  timestamp step over 1.5 frames; over 1 s is a pause, which the recorder
+  leaves on purpose). Score = repeated + missing frames as a share of the
+  timeline; the budget is under 0.5% (`docs/DESIGN.md` §5).
+- **`cargo run --release --example judder -- <clip.mp4>...`** decodes a
+  clip at 344×144 grey, compares each picture with the one before (mean
+  difference under 0.1 of 255 = same picture) and prints the score and
+  the worst moments. `RERUNS_JUDDER_SIZES=1` adds the encoded sizes of
+  repeated and new pictures.
+- **Recorder counters** (`recorder.rs` `Pacing`): the same tally fed
+  from encoded packet sizes in the video appsink callback (a
+  non-keyframe under a quarter of the median of the last 128 is a
+  repeat), plus the frame queue's `overrun` count (the queue is now named
+  `frames`). Logged as `clip pacing` on every save and `frame pacing`
+  when a recording stops; `video pacing` gained `source_fps`. The 25%
+  cut-off was measured: repeats' 95th percentile was 25–42% of the median
+  across five games, new pictures' 5th percentile 42–50%. The first try
+  (4%) missed most repeats. The guess follows the decoded truth on clips
+  that are all gameplay and is off on clips with menus; the example is
+  the truth.
+- **Baseline, every clip in `Videos\Reruns` (1.0.0–1.1.5 recordings):**
+  none is inside the budget except one Fortnite clip (0.08%). R6S
+  2026-11-09: 5.1% (94 repeats in 49 freezes of 1–4 frames, no holes).
+  DBD 2026-11-07: 8.9% (157 repeats, 4 holes). Deadlock: 22–27%, mostly
+  single repeated frames about 15 times a second. Overwatch 2026-11-04:
+  2–13%. Fortnite at 120 fps: 0.1–2.9%; the two 2026-11-06 Fortnite clips
+  have a hole every ~5 frames (20%), which is the frame queue dropping.
+- **Not known yet:** how much of this is the game drawing fewer than 60
+  new frames a second (a repeat then is the truth, not a capture fault).
+  The A/B runs need PresentMon alongside to tell.
+- Test clips for the analyzer must be 4:2:0: x264 makes a monochrome
+  stream from grey input and the D3D12 decoder refuses it. With rate
+  control on, x264 refines a repeated picture and it no longer decodes
+  identical; the test encodes at a fixed quantizer.
+- This PC had Smart App Control on, which blocked Cargo's build scripts
+  (os error 4551); the owner turned it off on 2026-11-10.
+- **A/B harness: `scripts/judder-ab.ps1`.** One run per capture path
+  (`-Path compat | window | hdr-window`): stops any running Reruns,
+  backs up `settings.json` once and sets `hdr_compatibility`,
+  `hdr_window_capture` and `replay_seconds` (60 by default), starts
+  `target\release\reruns.exe` in the tray, waits for the clip saved with
+  the hotkey, scores it, and writes a report, the run's log and a row in
+  `target\judder-ab\summary.csv`. `-Restore` puts the settings back.
+  `-Runtime bundled` (default) runs on the installed Reruns' GStreamer
+  (1.26.9, what users get); `-Runtime dev` on the development install
+  (1.28.8). Checked without a game: the scorer and the app both run on
+  the bundled runtime, and the app began recording Deadlock. Not yet
+  done: a full run ending in a saved clip.
+  - A local `tauri build --no-bundle` leaves an **empty `gst-plugins`
+    folder beside `reruns.exe`**; the app then loads plugins only from
+    there and reports "no working H264 encoder found". The script
+    removes it when it holds no DLL.
+  - pnpm isn't on this PC: build with `node_modules\.bin\vite build`
+    then `node_modules\.bin\tauri build --no-bundle --config
+    '{"build":{"beforeBuildCommand":""}}'` from `app\`.
+  - `video pacing` and `frame pacing` are now logged on every save too:
+    a recording that ends without a clean stop left no totals.
+  - PresentMon 2.6.0 (Intel's console build, signature checked) is at
+    `target	ools\presentmon\` (not in git). From an administrator
+    terminal the script records the game's presents during a run and
+    reports its fps and the share of the clip's frame slots in which the
+    game presented nothing: the floor no capture can beat (a steady
+    45 fps game gives 25% at 60 fps). Its CSV summary is tested on a
+    made-up capture (`-PresentsCsv <file>`); a live trace hasn't been run
+    (this needs elevation), so the `--v1_metrics` column names and the
+    `--terminate_existing_session` stop are still to be seen working.
+- **First runs and what the clips say (2026-11-10 night):** only two
+  `compat` runs in Deadlock, no PresentMon (terminal not elevated), so
+  no comparison between paths yet. Findings from them and the older
+  clips:
+  - **The analyzer over-counted slow scenes.** In a clip with little
+    motion (Deadlock: median picture difference 0.25–0.66 of 255)
+    ordinary frames dip under the "same picture" threshold. A short
+    freeze now counts only with clear motion (difference ≥ 0.5) on both
+    sides; the rest are reported as "not counted" with the share of the
+    clip that could be judged. Rescored: the old Deadlock clips fall
+    from 22–27% to 0.4–3.9% (only 4–41% of them judgeable), tonight's
+    45 s clip from 7.6% to 2.0%, R6S 5.1% → 4.7%, DBD 8.9% → 7.5%. The
+    earlier baseline numbers in this file are from before this rule.
+  - **Freezes come on a steady rhythm of about five a second** in the
+    clips with real motion: R6S 190 ms, DBD 197 ms (the period noted on
+    2026-11-07), Deadlock tonight 227 ms; strength 0.45–0.58 against
+    0.15–0.17 by chance. Two games, same rhythm: it is the capture side,
+    not the games.
+  - **The capture source runs fast:** 61–69 frames a second for the 60
+    asked for in every HDR-compatibility session, and `videorate` drops
+    the extra. Tonight's clip: 64.65 fps, which beats against 60 every
+    215 ms; its freezes came every 227 ms. Likely cause, not proven: the
+    source wakes early, grabs twice in one frame slot, gets nothing new
+    the second time and re-sends the old picture. To prove: make the
+    source keep to 60 and see whether the rhythm goes.
+  - **Live counters over a 39-minute Deadlock session** (the test build,
+    after the runs): 6.6% by the size guess, 9,319 repeats in 4,832
+    freezes, 35 missing frames in 32 holes, 37 frame-queue overruns. So
+    the queue does drop, rarely; repeats are the bulk.
+- **Cause found and fixed (2026-11-11): Windows' timer.** GStreamer's
+  screen capture sources (`d3d12screencapturesrc`, `d3d11screencapturesrc`)
+  sleep on the pipeline clock until the next frame slot, compute the
+  slot from the time they wake, and capture at once when the slot isn't
+  the last one they did. GStreamer never raises Windows' timer
+  resolution (`gstsystemclock.c` waits on a GLib condition variable), so
+  sleeps end on the 15.6 ms system tick, 64 a second; and Windows 11
+  ignores a process's own request for finer ticks while it has no
+  visible window (Reruns in the tray). On a 64 Hz tick the 60 fps source
+  wakes late, lands in the next slot, and grabs again straight away;
+  Desktop Duplication has nothing new for the second grab and the old
+  picture goes out again. Hence 61–69 fps from the source and a freeze
+  rhythm near the 64-against-60 beat.
+  `clip_core::timer::PreciseTimer` (held by every capture pipeline)
+  calls `timeBeginPeriod(1)` and `SetProcessInformation(
+  ProcessPowerThrottling)` with the execution-speed and
+  ignore-timer-resolution bits controlled and off, and undoes both when
+  the last pipeline goes. Measured here by `tests/capture_rate.rs`
+  (desktop duplication into a fakesink, 5 s): default timer 67.44 fps
+  with 42 second grabs in a slot (the very rate the owner's sessions
+  logged); with the timer held 60.01 fps and none. Not yet seen: a clip
+  from a game with the fix (the next sessions' `video pacing` line
+  should show `source_fps` at 60 and `dropped` near 0).
+- **Next:** A/B the three Windows capture paths (HDR compatibility,
+  plain window capture, "Capture the window in HDR") on the same scene
+  with PresentMon, then try fixes one at a time, keeping only what the
+  score says is better: opt out of Windows' background throttling and
+  hold a 1 ms timer while recording, MMCSS on the streaming threads, pin
+  the pipeline clock, move the leaky queue ahead of `videorate`.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner

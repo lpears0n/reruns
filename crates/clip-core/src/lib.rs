@@ -10,11 +10,13 @@ pub mod hdr;
 pub mod launchers;
 pub mod media;
 pub mod meter;
+pub mod pacing;
 pub mod recorder;
 pub mod ring;
 pub mod save;
 pub mod screenshot;
 pub mod sound;
+pub mod timer;
 pub mod tonemap;
 
 // Linux: Wayland compositors (KWin direct, or the screen-cast portal),
