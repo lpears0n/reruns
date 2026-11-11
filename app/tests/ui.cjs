@@ -508,6 +508,11 @@ async function runScenario(scenario, browser) {
     { version: '1.2.0', current_version: '1.1.0', notes: null, prompt: true },
   )
   await page.getByRole('dialog', { name: 'Reruns 1.2.0' }).waitFor()
+  assert.equal(
+    await page.evaluate(() => window.__calls.filter((c) => c === 'found_update').length),
+    2,
+    'a prompt shown from the event is marked as shown',
+  )
   await shot('update-prompt')
   await page.getByRole('button', { name: 'Later' }).click()
   assert.equal(await page.getByRole('dialog', { name: 'Reruns 1.2.0' }).count(), 0, 'Later closes the prompt')
