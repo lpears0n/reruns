@@ -776,13 +776,42 @@ behaves changed.
   on mount, test-encoding every encoder on each launch, tray launches at
   login included. Settings already asks when it opens; the mount call is
   gone.
-- **Still to do, in order:** create the overlay webview only when a
-  game starts (and never with the popup off; `overlay::create` in
-  `lib.rs` setup); updates: refuse or hold `install_update` while
-  recording, saving or rendering, drop `--autostart` from the relaunch,
-  a timeout and Cancel on the download; `GST_REGISTRY` in the app's own
-  folder; free the main webview while hidden; prune the bundled DLLs;
-  pin the GStreamer MSI in the release workflow.
+- **In-game popup made on demand:** `overlay::init` only listens; the
+  window (a webview of its own) is built for the first popup, which
+  waits in `PENDING` until the page emits `overlay-ready` after its
+  `listen`. With the popup off, or no game, it is never built. Checked:
+  a tray launch now has one webview renderer; UI test `overlay` passes.
+  Not yet seen: the first "Ready to record" over a real game arriving
+  through the wait.
+- **Updates no longer kill a recording:** `install_update` downloads
+  (`Update::download`, 15-minute timeout, `cancel_update` stops it; the
+  prompt has a Cancel button), then installs only when no game is being
+  recorded. Otherwise the bytes wait in `updates::Pending`, the command
+  answers with the game's name ("Downloaded. Installs when <game>
+  closes."), and the `status-changed` listener installs once the state
+  leaves recording/retrying. A render in progress refuses the update
+  (`AppState::rendering`). Checks time out after 30 s.
+- **Window back after an update:** the plugin relaunches with this
+  launch's arguments, `--autostart` included, and its builder's
+  `current_exe_args` is private. So `install` writes the new version to
+  `%APPDATA%\reruns\updated-to`; `updates::take_marker` at start-up
+  shows the window when it names the running version, and the page
+  toasts "Updated to x.y.z" (`updated_to`). None of the update flow can
+  be run from a local build (no updater key): it is compiled, linted
+  and its UI mocked, and the first release after this one is the test.
+- **GStreamer registry of its own (Windows bundle):**
+  `%LOCALAPPDATA%\gg.reruns.app\gst-registry-<version>.bin`, older ones
+  removed, unless `GST_REGISTRY` is set. Only takes effect in an
+  installed build (the bundled `gst-plugins` folder must exist).
+- **Hidden window does less:** a status change no longer re-lists the
+  library, and the 1 s clock tick is skipped, while
+  `document.visibilityState` isn't `visible`; coming back refreshes.
+- **Still to do:** free the main webview while hidden (destroy and
+  rebuild, or WebView2 `TrySuspend`); no main webview at all for a
+  tray launch; one `list_library` command; prune the bundled DLLs to
+  what the plugins load; pin and cache the GStreamer MSI in the release
+  workflow; release notes and "Skip this version" in the prompt;
+  screenshot converts only the last frame.
 
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
