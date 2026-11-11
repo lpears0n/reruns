@@ -106,16 +106,8 @@ pub fn spawn_checks(app: &AppHandle) {
     // A downloaded update goes in when the game being recorded closes.
     {
         let handle = app.clone();
-        app.listen_any(service::STATUS_CHANGED, move |event| {
-            let status: serde_json::Value =
-                serde_json::from_str(event.payload()).unwrap_or_default();
-            if matches!(status["state"].as_str(), Some("recording" | "retrying")) {
-                return;
-            }
-            let waiting = handle.state::<Pending>().update.lock().unwrap().take();
-            if let Some((update, bytes)) = waiting {
-                install(&handle, &update, bytes);
-            }
+        app.listen_any(service::STATUS_CHANGED, move |_| {
+            tauri::async_runtime::spawn(install_waiting(handle.clone()));
         });
     }
     let app = app.clone();
@@ -216,6 +208,40 @@ pub fn found_update(found: State<Found>) -> Option<UpdateInfo> {
     info
 }
 
+/// Install the downloaded update that is waiting, if nothing would be cut
+/// short by the restart: no game being recorded, no edit rendering. Called
+/// when either may have ended.
+pub async fn install_waiting(app: AppHandle) {
+    let pending = app.state::<Pending>();
+    if pending.update.lock().unwrap().is_none() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    if state.rendering.load(Ordering::Relaxed) || recording(&app).await.is_some() {
+        return;
+    }
+    let waiting = pending.update.lock().unwrap().take();
+    if let Some((update, bytes)) = waiting
+        && let Err(e) = install(&app, &update, bytes)
+    {
+        // The prompt that started this is long closed, and the window may
+        // be gone in the tray.
+        if let Err(e) = crate::system::notify(&app, "Update failed", &e).await {
+            tracing::debug!("notify: {e:#}");
+        }
+    }
+}
+
+/// The game being recorded, if one is.
+async fn recording(app: &AppHandle) -> Option<String> {
+    let status = app.state::<AppState>().service.status().await.ok()?;
+    matches!(
+        status.state,
+        service::State::Recording | service::State::Retrying
+    )
+    .then(|| status.game.unwrap_or_else(|| "the game".into()))
+}
+
 /// Look for a newer release now.
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
@@ -238,23 +264,30 @@ pub async fn install_update(app: AppHandle) -> Result<Option<String>, String> {
     if pending.downloading.swap(true, Ordering::SeqCst) {
         return Err("The update is already downloading.".into());
     }
-    let downloaded = download(&app, &pending).await;
+    // Cancel covers the check for the release too, not only the download.
+    let downloaded = tokio::select! {
+        downloaded = download(&app) => downloaded,
+        () = pending.cancel.notified() => Err("Download cancelled".into()),
+    };
     pending.downloading.store(false, Ordering::SeqCst);
     let (update, bytes) = downloaded?;
 
-    let status = app.state::<AppState>().service.status().await.ok();
-    if let Some(status) = status
-        && matches!(
-            status.state,
-            service::State::Recording | service::State::Retrying
-        )
-    {
-        let game = status.game.unwrap_or_else(|| "the game".into());
-        tracing::info!(version = %update.version, %game, "update downloaded; waiting for the recording to stop");
-        *pending.update.lock().unwrap() = Some((update, bytes));
+    // Kept before asking what is being recorded: a game that closes in
+    // between then finds the update waiting, and installs it.
+    let version = update.version.clone();
+    *pending.update.lock().unwrap() = Some((update, bytes));
+    if let Some(game) = recording(&app).await {
+        tracing::info!(%version, %game, "update downloaded; waiting for the recording to stop");
         return Ok(Some(game));
     }
-    install(&app, &update, bytes);
+    let Some((update, bytes)) = pending.update.lock().unwrap().take() else {
+        return Ok(None); // the game closed just now, and that installed it
+    };
+    // An edit started rendering during the download.
+    if app.state::<AppState>().rendering.load(Ordering::Relaxed) {
+        return Err("An edit is rendering. Update when it's done.".into());
+    }
+    install(&app, &update, bytes)?;
     Ok(None)
 }
 
@@ -266,7 +299,7 @@ pub fn cancel_update(pending: State<Pending>) {
     pending.update.lock().unwrap().take();
 }
 
-async fn download(app: &AppHandle, pending: &Pending) -> Result<(Update, Vec<u8>), String> {
+async fn download(app: &AppHandle) -> Result<(Update, Vec<u8>), String> {
     let update = app
         .updater_builder()
         .timeout(DOWNLOAD_TIMEOUT)
@@ -279,23 +312,23 @@ async fn download(app: &AppHandle, pending: &Pending) -> Result<(Update, Vec<u8>
     tracing::info!(version = %update.version, "downloading update");
     let progress = app.clone();
     let mut done = 0u64;
-    let bytes = tokio::select! {
-        bytes = update.download(
+    let bytes = update
+        .download(
             move |chunk, total| {
                 done += chunk as u64;
                 let fraction = total.map(|t| (done as f64 / t.max(1) as f64).min(1.0));
                 let _ = progress.emit(UPDATE_PROGRESS, fraction);
             },
             || {},
-        ) => bytes.map_err(|e| e.to_string())?,
-        () = pending.cancel.notified() => return Err("Download cancelled".into()),
-    };
+        )
+        .await
+        .map_err(|e| e.to_string())?;
     Ok((update, bytes))
 }
 
 /// Install `bytes` and restart into the new version. On Windows this
 /// starts the installer and ends the process; it returns only on failure.
-fn install(app: &AppHandle, update: &Update, bytes: Vec<u8>) {
+fn install(app: &AppHandle, update: &Update, bytes: Vec<u8>) -> Result<(), String> {
     tracing::info!(version = %update.version, "installing update");
     // The relaunch gets this launch's arguments, `--autostart` included,
     // and would come back hidden in the tray: leave word that it follows
@@ -310,14 +343,10 @@ fn install(app: &AppHandle, update: &Update, bytes: Vec<u8>) {
         Err(e) => {
             let _ = std::fs::remove_file(&marker);
             tracing::warn!("installing the update failed: {e}");
-            let _ = app.emit(UPDATE_FAILED, e.to_string());
+            Err(e.to_string())
         }
     }
 }
-
-/// Installing failed after the download (the command had already
-/// answered if it was waiting for a game); the payload is the reason.
-pub const UPDATE_FAILED: &str = "update-failed";
 
 fn marker() -> PathBuf {
     dirs::config_dir()
