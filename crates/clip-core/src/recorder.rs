@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread::JoinHandle,
 };
@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     audio::{AudioSource, add_aac_branch, add_audio_mix, add_audio_source},
-    capture::{CapturePath, CaptureTarget, VideoConfig, add_video_branch},
+    capture::{CapturePath, CaptureTarget, FRAME_QUEUE, VideoConfig, add_video_branch},
     encoder::Encoder,
+    pacing::PacketMonitor,
     ring::{ReplayBuffer, running_time_buffer},
     save::write_mp4,
 };
@@ -282,6 +283,7 @@ pub struct Recorder {
     /// Audio track names ("desktop", "mic"), in buffer order, for the log.
     audio_names: Vec<&'static str>,
     error: Arc<Mutex<Option<String>>>,
+    pacing: Arc<Pacing>,
     stop: Arc<AtomicBool>,
     bus_thread: Option<JoinHandle<()>>,
     // Dropped last: pipewiresrc borrows its fd.
@@ -361,6 +363,7 @@ impl Recorder {
                 replay_seconds: cfg.replay_seconds,
                 audio_names: audio_track_names(&cfg.audio),
                 error: built.error,
+                pacing: built.pacing,
                 stop: built.stop,
                 bus_thread: Some(built.bus_thread),
                 source: Some(source),
@@ -459,6 +462,7 @@ impl Recorder {
             (buffer.snapshot(duration)?, stats)
         };
         self.log_audio(&audio_stats, Some((clip.start, clip.start + clip.duration)));
+        self.pacing.log_clip(clip.start);
         let markers = markers_in(&self.marks.lock().unwrap(), clip.start, clip.duration);
         let path = path.to_owned();
         tokio::task::spawn_blocking(move || {
@@ -530,15 +534,24 @@ impl Recorder {
             .collect();
         self.log_audio(&stats, None);
         if let Some(rate) = self.pipeline.by_name("rate") {
+            let frames_in = rate.property::<u64>("in");
+            // What the source really delivers, against the rate asked for.
+            let source_fps = self
+                .pipeline
+                .current_running_time()
+                .filter(|t| !t.is_zero())
+                .map(|t| frames_in as f64 / t.seconds_f64());
             tracing::info!(
-                frames_in = rate.property::<u64>("in"),
+                frames_in,
                 out = rate.property::<u64>("out"),
                 duplicated = rate.property::<u64>("duplicate"),
                 dropped = rate.property::<u64>("drop"),
+                source_fps = source_fps.map(|f| (f * 100.0).round() / 100.0),
                 clock = ?self.pipeline.clock().map(|c| c.name()),
                 "video pacing"
             );
         }
+        self.pacing.log_session();
         self.pipeline.set_state(gst::State::Null)?;
         release_capture(&self.pipeline);
         self.stop.store(true, Ordering::Relaxed);
@@ -584,11 +597,63 @@ fn release_capture(pipeline: &gst::Pipeline) {
     let _ = pipeline;
 }
 
+/// What `videorate`'s counters can't see (see [`crate::pacing`]): pictures
+/// the source repeated, and frames lost after the rate was fixed. Counted
+/// from the encoded packets and the frame queue; no frame is looked at.
+struct Pacing {
+    packets: Mutex<PacketMonitor>,
+    /// Times the frame queue was full when a frame arrived; each one drops
+    /// its oldest frame, which leaves a hole in the timeline.
+    queue_overruns: AtomicU64,
+}
+
+impl Pacing {
+    fn new(fps: u32) -> Self {
+        Self {
+            packets: Mutex::new(PacketMonitor::new(f64::from(fps))),
+            queue_overruns: AtomicU64::new(0),
+        }
+    }
+
+    /// A clip that starts at `start`: the repeats and holes inside it.
+    fn log_clip(&self, start: gst::ClockTime) {
+        let clip = self.packets.lock().unwrap().tally().since(start.nseconds());
+        tracing::info!(
+            judder_percent = (clip.judder_percent() * 100.0).round() / 100.0,
+            repeated = clip.repeated,
+            freezes = clip.repeat_runs,
+            longest_freeze = clip.longest_repeat,
+            missing = clip.missing,
+            holes = clip.holes,
+            "clip pacing"
+        );
+    }
+
+    /// The whole recording, when it stops.
+    fn log_session(&self) {
+        let all = self.packets.lock().unwrap().tally().totals();
+        tracing::info!(
+            judder_percent = (all.judder_percent() * 100.0).round() / 100.0,
+            frames = all.frames,
+            repeated = all.repeated,
+            freezes = all.repeat_runs,
+            longest_freeze = all.longest_repeat,
+            missing = all.missing,
+            holes = all.holes,
+            still = all.still,
+            pauses = all.pauses,
+            queue_overruns = self.queue_overruns.load(Ordering::Relaxed),
+            "frame pacing"
+        );
+    }
+}
+
 /// A built capture pipeline that hasn't proven itself yet.
 struct Pipeline {
     pipeline: gst::Pipeline,
     buffer: Arc<Mutex<ReplayBuffer>>,
     error: Arc<Mutex<Option<String>>>,
+    pacing: Arc<Pacing>,
     stop: Arc<AtomicBool>,
     bus_thread: JoinHandle<()>,
 }
@@ -625,11 +690,26 @@ impl Pipeline {
         let buffer = Arc::new(Mutex::new(if mixed { buffer.with_mix() } else { buffer }));
 
         let parse = add_video_branch(&pipeline, target, encoder, &cfg.video, path)?;
+        let pacing = Arc::new(Pacing::new(cfg.video.fps));
+        if let Some(queue) = pipeline.by_name(FRAME_QUEUE) {
+            let pacing = pacing.clone();
+            queue.connect("overrun", false, move |_| {
+                pacing.queue_overruns.fetch_add(1, Ordering::Relaxed);
+                None
+            });
+        }
         let buf = buffer.clone();
         let mut keyframes = KeyframeGuard::default();
+        let packets = pacing.clone();
         link_appsink(&pipeline, &parse, "video-sink", move |caps, buffer| {
+            let keyframe = !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT);
             let ask = buffer.pts().is_some_and(|pts| {
-                keyframes.on_packet(pts, !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT))
+                packets
+                    .packets
+                    .lock()
+                    .unwrap()
+                    .packet(pts.nseconds(), buffer.size(), keyframe);
+                keyframes.on_packet(pts, keyframe)
             });
             let mut b = buf.lock().unwrap();
             if let Some(caps) = caps {
@@ -663,6 +743,7 @@ impl Pipeline {
             pipeline,
             buffer,
             error,
+            pacing,
             stop,
             bus_thread,
         })

@@ -633,6 +633,58 @@ log says all required elements load from the bundle, then publish the
 draft. Worth a Windows recording with game audio and a mic before
 publishing: the live mixer is the one part no Windows machine has run.
 
+## Smooth recording, step 1: measuring judder (2026-11-10, branch `smooth-capture`)
+
+The owner approved a seven-part improvement plan (recording smoothness
+first, then startup/memory/updates, sounds, the in-game popup, UI
+cleanup, features, mobile groundwork). This is its first piece: a way to
+measure judder before any capture change. Nothing about how recording
+behaves changed.
+
+- **`clip_core::pacing`**: `Tally` counts **repeats** (the same picture
+  again for up to 0.25 s; longer is a still scene) and **holes** (a
+  timestamp step over 1.5 frames; over 1 s is a pause, which the recorder
+  leaves on purpose). Score = repeated + missing frames as a share of the
+  timeline; the budget is under 0.5% (`docs/DESIGN.md` §5).
+- **`cargo run --release --example judder -- <clip.mp4>...`** decodes a
+  clip at 344×144 grey, compares each picture with the one before (mean
+  difference under 0.1 of 255 = same picture) and prints the score and
+  the worst moments. `RERUNS_JUDDER_SIZES=1` adds the encoded sizes of
+  repeated and new pictures.
+- **Recorder counters** (`recorder.rs` `Pacing`): the same tally fed
+  from encoded packet sizes in the video appsink callback (a
+  non-keyframe under a quarter of the median of the last 128 is a
+  repeat), plus the frame queue's `overrun` count (the queue is now named
+  `frames`). Logged as `clip pacing` on every save and `frame pacing`
+  when a recording stops; `video pacing` gained `source_fps`. The 25%
+  cut-off was measured: repeats' 95th percentile was 25–42% of the median
+  across five games, new pictures' 5th percentile 42–50%. The first try
+  (4%) missed most repeats. The guess follows the decoded truth on clips
+  that are all gameplay and is off on clips with menus; the example is
+  the truth.
+- **Baseline, every clip in `Videos\Reruns` (1.0.0–1.1.5 recordings):**
+  none is inside the budget except one Fortnite clip (0.08%). R6S
+  2026-11-09: 5.1% (94 repeats in 49 freezes of 1–4 frames, no holes).
+  DBD 2026-11-07: 8.9% (157 repeats, 4 holes). Deadlock: 22–27%, mostly
+  single repeated frames about 15 times a second. Overwatch 2026-11-04:
+  2–13%. Fortnite at 120 fps: 0.1–2.9%; the two 2026-11-06 Fortnite clips
+  have a hole every ~5 frames (20%), which is the frame queue dropping.
+- **Not known yet:** how much of this is the game drawing fewer than 60
+  new frames a second (a repeat then is the truth, not a capture fault).
+  The A/B runs need PresentMon alongside to tell.
+- Test clips for the analyzer must be 4:2:0: x264 makes a monochrome
+  stream from grey input and the D3D12 decoder refuses it. With rate
+  control on, x264 refines a repeated picture and it no longer decodes
+  identical; the test encodes at a fixed quantizer.
+- This PC had Smart App Control on, which blocked Cargo's build scripts
+  (os error 4551); the owner turned it off on 2026-11-10.
+- **Next:** A/B the three Windows capture paths (HDR compatibility,
+  plain window capture, "Capture the window in HDR") on the same scene
+  with PresentMon, then try fixes one at a time, keeping only what the
+  score says is better: opt out of Windows' background throttling and
+  hold a 1 ms timer while recording, MMCSS on the streaming threads, pin
+  the pipeline clock, move the leaky queue ahead of `videorate`.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner
