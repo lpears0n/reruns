@@ -388,7 +388,12 @@
       const recording = status?.state === 'recording'
       if (recording || Date.now() - now >= 60_000) now = Date.now()
     }, 1000)
-    const updates = onUpdateAvailable(announceUpdate)
+    const updates = onUpdateAvailable((u) => {
+      announceUpdate(u)
+      // Asking marks the prompt as shown, or a window rebuilt after the
+      // tray would ask again after "Later".
+      if (u.prompt) api.foundUpdate()
+    })
     // The first check runs as the app starts, maybe before this page
     // listened: once listening, ask what it found.
     updates.then(() => api.foundUpdate()).then((u) => u && announceUpdate(u))
