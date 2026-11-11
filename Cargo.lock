@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "clip-core"
-version = "1.1.5"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "clip-ipc"
-version = "1.1.5"
+version = "1.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "reruns"
-version = "1.1.5"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3665,7 +3665,7 @@ dependencies = [
 
 [[package]]
 name = "rerunsctl"
-version = "1.1.5"
+version = "1.2.0"
 dependencies = [
  "clip-ipc",
  "serde_json",

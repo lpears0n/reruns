@@ -626,12 +626,19 @@ input queues made blocking, the game track gets a ~300 ms hole and the
 test fails. Clips saved before this keep the mic on track 2 only; render
 an edit to hear it. Not yet run on Windows.
 
-**v1.1.5 prepared** with it on `claude/new-session-kuipn1` (one PR: the
-fix, then the version bump and `docs/release-notes/v1.1.5.md`). After it
-merges: tag `v1.1.5` on `main`'s merge commit, check the Windows build
-log says all required elements load from the bundle, then publish the
-draft. Worth a Windows recording with game audio and a mic before
-publishing: the live mixer is the one part no Windows machine has run.
+**v1.1.5 was never tagged.** Its mic-mix change went to `main` in PR #33
+with the version bump, and it is folded into **v1.2.0** (2026-11-11), so
+`docs/release-notes/v1.1.5.md` was removed. Before publishing, check the
+Windows build log says all required elements load from the bundle, and
+make a Windows recording with game audio and a mic: the live mixer is the
+one part no Windows machine has run.
+
+**v1.2.0 prepared** on branch `release-1.2.0` from `main` (version 1.2.0 in
+the workspace, `app/package.json`, `tauri.conf.json` and both `clip-ipc`
+path dependencies; notes in `docs/release-notes/v1.2.0.md`). It carries
+W1–W3 and the mic-mix change. Not yet: a game clip with the timer fix,
+heard sounds over a game, and a run of the update flow. After the PR
+merges: tag `v1.2.0` on `main`'s merge commit, then publish the draft.
 
 ## Smooth recording, step 1: measuring judder (2026-11-10, branch `smooth-capture`)
 
