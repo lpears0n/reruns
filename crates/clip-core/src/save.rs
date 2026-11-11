@@ -34,7 +34,7 @@ pub fn partial_path(path: &Path) -> PathBuf {
 pub fn finish_partial(path: &Path, result: Result<()>) -> Result<()> {
     let partial = partial_path(path);
     if let Err(e) = result {
-        let _ = std::fs::remove_file(&partial);
+        discard(&partial);
         return Err(e);
     }
     rename_retrying(&partial, path).with_context(|| {
@@ -46,18 +46,47 @@ pub fn finish_partial(path: &Path, result: Result<()>) -> Result<()> {
     })
 }
 
-/// How long a rename keeps trying while Windows reports the file busy.
-const RENAME_PATIENCE: Duration = Duration::from_secs(5);
+/// Remove a file that won't be finished, waiting out a process that has
+/// it open for now (see [`remove_retrying`]). One still held after that is
+/// left behind, with a warning.
+fn discard(path: &Path) {
+    if let Err(e) = remove_retrying(path) {
+        tracing::warn!(path = %path.display(), "couldn't remove an unfinished file: {e}");
+    }
+}
+
+/// How long a rename or removal keeps trying while Windows reports the
+/// file busy.
+const BUSY_PATIENCE: Duration = Duration::from_secs(5);
 
 /// `std::fs::rename`, replacing `to`. On Windows a file that was just
 /// written is often held open for a moment by antivirus or the search
 /// indexer, which fails a rename (not a write) with a sharing violation;
 /// those are retried for a few seconds.
 pub fn rename_retrying(from: &Path, to: &Path) -> std::io::Result<()> {
-    let deadline = Instant::now() + RENAME_PATIENCE;
+    retry_busy(|| std::fs::rename(from, to))
+}
+
+/// `std::fs::remove_file`, retried like [`rename_retrying`]: deleting is
+/// refused the same way while another process has the file open. Besides
+/// antivirus, that includes any process started while GStreamer had the
+/// file open: it opens files through the C runtime, whose handles are
+/// inherited, so the child holds the file until it exits. A file that
+/// isn't there counts as removed.
+pub fn remove_retrying(path: &Path) -> std::io::Result<()> {
+    match retry_busy(|| std::fs::remove_file(path)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+/// Run `op` until it succeeds, fails for another reason, or the file has
+/// been busy for [`BUSY_PATIENCE`].
+fn retry_busy(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    let deadline = Instant::now() + BUSY_PATIENCE;
     let mut wait = Duration::from_millis(10);
     loop {
-        match std::fs::rename(from, to) {
+        match op() {
             Err(e) if busy(&e) && Instant::now() < deadline => {
                 std::thread::sleep(wait);
                 wait = (wait * 2).min(Duration::from_millis(500));
@@ -233,6 +262,59 @@ mod tests {
             .collect();
         assert_eq!(names, ["clip.mp4.json"], "no temporary files left");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A delete refused because another handle has the file open is retried
+    /// until that handle is closed. The handle shares reading and writing
+    /// but not deleting, like the C runtime's handles a child process
+    /// inherits from GStreamer.
+    #[cfg(windows)]
+    #[test]
+    fn removal_waits_for_a_held_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 1;
+        const FILE_SHARE_WRITE: u32 = 2;
+
+        let dir = std::env::temp_dir().join(format!("reruns-remove-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clip.mp4.part");
+        std::fs::write(&path, b"unfinished").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&path)
+            .unwrap();
+        let refused = std::fs::remove_file(&path).unwrap_err();
+        assert!(busy(&refused), "a held file can't be deleted: {refused}");
+
+        let (started_tx, started) = std::sync::mpsc::channel();
+        let remover = std::thread::spawn({
+            let path = path.clone();
+            move || {
+                started_tx.send(Instant::now()).unwrap();
+                remove_retrying(&path)
+            }
+        });
+        let started = started.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        drop(held);
+        let released = Instant::now();
+
+        remover.join().unwrap().unwrap();
+        assert!(
+            started < released,
+            "the removal began while the file was held"
+        );
+        assert!(!path.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn removing_a_missing_file_succeeds() {
+        let path = std::env::temp_dir().join(format!("reruns-missing-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        remove_retrying(&path).unwrap();
     }
 
     #[test]
