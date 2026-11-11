@@ -3638,6 +3638,7 @@ dependencies = [
  "clip-core",
  "clip-ipc",
  "dirs",
+ "getrandom 0.3.4",
  "notify-debouncer-full",
  "reqwest",
  "rustix",

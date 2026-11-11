@@ -767,6 +767,23 @@ behaves changed.
   hold a 1 ms timer while recording, MMCSS on the streaming threads, pin
   the pipeline clock, move the leaky queue ahead of `videorate`.
 
+## Startup, memory, updates (W2), begun 2026-11-11 (branch `startup-memory-updates`, on top of `smooth-capture`)
+
+- **Media server token (Windows):** `random_token` read `/dev/urandom`,
+  which Windows lacks, so the token was the clock's nanoseconds. Now
+  `getrandom::fill`, with a test.
+- **No encoder probes at launch:** `App.svelte` called `get_capabilities`
+  on mount, test-encoding every encoder on each launch, tray launches at
+  login included. Settings already asks when it opens; the mount call is
+  gone.
+- **Still to do, in order:** create the overlay webview only when a
+  game starts (and never with the popup off; `overlay::create` in
+  `lib.rs` setup); updates: refuse or hold `install_update` while
+  recording, saving or rendering, drop `--autostart` from the relaunch,
+  a timeout and Cancel on the download; `GST_REGISTRY` in the app's own
+  folder; free the main webview while hidden; prune the bundled DLLs;
+  pin the GStreamer MSI in the release workflow.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner

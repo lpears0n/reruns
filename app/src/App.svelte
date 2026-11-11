@@ -368,8 +368,9 @@
     loadLibrary()
     refreshUsage()
     api.settings().then((s) => (settings = s))
-    // Probing encoders takes a moment; settings fill in when it's done.
-    api.capabilities().then((c) => (caps = c))
+    // Encoders are probed when Settings opens (the effect above), not
+    // here: a launch into the tray would test-encode with every encoder
+    // for nothing, maybe while a game is running.
     // Everything else arrives as events. Coming back to the window is the one
     // moment worth re-checking, in case an event was missed while hidden.
     const onFocus = () => {
