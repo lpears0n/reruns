@@ -119,7 +119,11 @@ function mockBridge(data) {
       }
       if (cmd === 'render_clip') { window.__lastRender = args; return args.path }
       if (cmd === 'copy_clip') { window.__copied = args.path; return null }
-      if (cmd === 'set_settings') { data.get_settings = args.settings; return null }
+      if (cmd === 'set_settings') {
+        if (window.__settingsError) throw window.__settingsError
+        data.get_settings = args.settings
+        return null
+      }
       if (cmd === 'list_library') {
         const ignored = data.get_settings.ignored_games.map((i) => i.name.toLowerCase())
         return { clips: data.list_clips, games: data.list_games.filter((g) => !ignored.includes(g.name.toLowerCase())) }
@@ -620,6 +624,65 @@ async function startupUpdateScenario(browser) {
   await page.close()
 }
 
+// Things that used to go wrong quietly: keys reaching the page behind the
+// update prompt, a toast taking the place of a pending Undo, and a setting
+// that failed to save without a word.
+async function uxScenario(browser) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' })
+  page.on('pageerror', (e) => { throw new Error(`page error in ux: ${e.message}`) })
+  await page.addInitScript(mockBridge, fixtures('full'))
+  await page.goto(`http://localhost:${PORT}/`)
+  await page.getByRole('button', { name: 'All clips' }).click()
+  const cards = () => page.locator('.clip-grid > *').count()
+  await page.locator('.clip-grid > *').first().waitFor()
+  const before = await cards()
+
+  // Two deletes, then a plain toast: Undo stays and brings both back.
+  for (let i = 0; i < 2; i++) {
+    const card = page.locator('.clip-grid > *').first()
+    await card.hover()
+    await card.getByRole('button', { name: 'Delete' }).click()
+    await card.getByRole('button', { name: 'Confirm delete' }).click()
+    await page.waitForTimeout(150)
+  }
+  assert.equal(await cards(), before - 2, 'two clips deleted')
+  const card = page.locator('.clip-grid > *').first()
+  await card.hover()
+  await card.getByRole('button', { name: 'Copy clip' }).click()
+  await page.waitForTimeout(150)
+  assert.equal(await page.getByRole('button', { name: 'Undo' }).count(), 1, 'a new toast leaves Undo up')
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await page.waitForTimeout(200)
+  assert.equal(await cards(), before, 'Undo brings back every pending delete')
+  await page.getByText('Clip copied').waitFor()
+
+  // With the update prompt open, keys stay in it.
+  await page.getByRole('button', { name: /Open .* clip/ }).first().click()
+  await page.locator('video').waitFor()
+  await page.evaluate(
+    (u) => window[`_${window.__listeners['update-available']}`]({ event: 'update-available', id: 1, payload: u }),
+    { version: '1.2.0', current_version: '1.1.0', notes: null, prompt: true },
+  )
+  const dialog = page.getByRole('dialog', { name: 'Reruns 1.2.0' })
+  await dialog.waitFor()
+  assert.ok(await dialog.evaluate((d) => d.contains(document.activeElement)), 'focus moves into the prompt')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(150)
+  assert.equal(await dialog.count(), 0, 'Escape closes the prompt')
+  assert.equal(await page.locator('video').count(), 1, 'and leaves the viewer open behind it')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(150)
+  assert.equal(await page.locator('video').count(), 0, 'a second Escape closes the viewer')
+
+  // A setting that fails to save says so.
+  await page.keyboard.press('3')
+  await page.getByRole('button', { name: 'General' }).click()
+  await page.evaluate(() => (window.__settingsError = "Can't write settings.json"))
+  await page.getByRole('switch', { name: 'Launch at login' }).click()
+  await page.getByText("Can't write settings.json").waitFor({ timeout: 2000 })
+  await page.close()
+}
+
 async function waitForServer() {
   for (let i = 0; i < 100; i++) {
     try {
@@ -656,6 +719,8 @@ async function waitForServer() {
       console.log('ok  overlay')
       await startupUpdateScenario(browser)
       console.log('ok  startup update')
+      await uxScenario(browser)
+      console.log('ok  ux')
     }
   } finally {
     await browser.close()

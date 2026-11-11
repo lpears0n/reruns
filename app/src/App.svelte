@@ -129,10 +129,26 @@
     showToast({ text, error })
   }
 
+  /** A notice that arrived while an Undo was up: shown once that closes. */
+  let queued: [ToastData, number] | null = null
+
   function showToast(t: ToastData, ms = 3000) {
+    // Never take a pending Undo off the screen.
+    if (toast?.action && !t.action) {
+      queued = [t, ms]
+      return
+    }
     toast = t
     clearTimeout(toastTimer)
-    toastTimer = setTimeout(() => (toast = null), ms)
+    toastTimer = setTimeout(closeToast, ms)
+  }
+
+  function closeToast() {
+    clearTimeout(toastTimer)
+    toast = null
+    const next = queued
+    queued = null
+    if (next) showToast(...next)
   }
 
   function go(v: View) {
@@ -238,16 +254,23 @@
   function remove(list: Clip[]) {
     if (!list.length) return
     if (viewing && list.some((c) => c.path === viewing!.path)) viewing = null
+    // One Undo covers every delete still pending, so they all get the
+    // full time again.
+    for (const p of pending) {
+      clearTimeout(p.timer)
+      p.timer = setTimeout(() => commit(p), UNDO_MS)
+    }
     const entry = { clips: list, timer: setTimeout(() => commit(entry), UNDO_MS) }
     pending = [...pending, entry]
-    const label = list.length === 1 ? `Deleted ${list[0].title ?? list[0].game} clip` : `Deleted ${list.length} clips`
-    showToast({ text: label, action: { label: 'Undo', run: () => undo(entry) } }, UNDO_MS)
+    const n = pending.reduce((sum, p) => sum + p.clips.length, 0)
+    const label = n === 1 ? `Deleted ${list[0].title ?? list[0].game} clip` : `Deleted ${n} clips`
+    showToast({ text: label, action: { label: 'Undo', run: undo } }, UNDO_MS)
   }
 
-  function undo(entry: (typeof pending)[number]) {
-    clearTimeout(entry.timer)
-    pending = pending.filter((p) => p !== entry)
-    toast = null
+  function undo() {
+    for (const p of pending) clearTimeout(p.timer)
+    pending = []
+    closeToast()
   }
 
   async function commit(entry: (typeof pending)[number]) {
@@ -530,7 +553,7 @@
             onfavorite={(c) => update(c, { favorite: !c.favorite })}
           />
         {:else if view === 'settings' && settings}
-          <SettingsView {settings} {usage} {caps} {status} bind:category bind:update={newRelease} onchange={changeSettings} onchoosescreen={chooseScreen} />
+          <SettingsView {settings} {usage} {caps} {status} bind:category bind:update={newRelease} onchange={changeSettings} onerror={(e) => notify(e, true)} onchoosescreen={chooseScreen} />
         {:else}
           <GamesView
             {games}
@@ -565,7 +588,7 @@
 {/if}
 
 {#if toast}
-  <Toast data={toast} onclose={() => (toast = null)} />
+  <Toast data={toast} onclose={closeToast} />
 {/if}
 
 {#if updatePrompt && newRelease}

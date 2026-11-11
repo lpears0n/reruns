@@ -56,23 +56,28 @@
     onclose()
   }
 
-  function onkeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && progress === undefined) onclose()
-  }
+  // A modal <dialog>: focus moves in and stays in, and the page behind
+  // can't be clicked or tabbed to.
+  let dialog: HTMLDialogElement
+  $effect(() => dialog.showModal())
+  const close = () => progress === undefined && onclose()
 </script>
 
-<svelte:window {onkeydown} />
-
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="fixed inset-0 z-60 flex items-center justify-center bg-black/60" onclick={() => progress === undefined && onclose()}>
-  <div
-    class="floating w-md p-5"
-    onclick={(e) => e.stopPropagation()}
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="update-title"
-    tabindex="-1"
-  >
+<!-- Keys stop here, or the viewer behind would act on them too. A click on
+     the dialog itself is a click on its backdrop. -->
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+<dialog
+  bind:this={dialog}
+  class="floating m-auto w-md text-fg backdrop:bg-black/60"
+  aria-labelledby="update-title"
+  onkeydown={(e) => e.stopPropagation()}
+  oncancel={(e) => {
+    e.preventDefault()
+    close()
+  }}
+  onclick={(e) => e.target === dialog && close()}
+>
+  <div class="p-5">
     <div class="flex items-center gap-3">
       <span class="flex size-9 flex-none items-center justify-center rounded-full bg-accent/15 text-accent">
         <Download size={18} />
@@ -111,9 +116,10 @@
       {/if}
       <div class="mt-5 flex justify-end gap-2">
         <button class="btn mr-auto whitespace-nowrap" onclick={skip}>Skip this version</button>
-        <button class="btn" onclick={onclose}>Later</button>
+        <!-- svelte-ignore a11y_autofocus -->
+        <button class="btn" onclick={onclose} autofocus>Later</button>
         <button class="btn-primary whitespace-nowrap" onclick={install}>Update and restart</button>
       </div>
     {/if}
   </div>
-</div>
+</dialog>

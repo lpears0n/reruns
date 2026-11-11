@@ -46,6 +46,7 @@
     category = $bindable(),
     update: available = $bindable(null),
     onchange,
+    onerror,
     onchoosescreen,
   }: {
     settings: Settings
@@ -56,6 +57,8 @@
     /** A newer release, once one has been found. */
     update?: UpdateInfo | null
     onchange: (s: Settings) => Promise<void>
+    /** A setting didn't save. */
+    onerror: (text: string) => void
     onchoosescreen: () => void
   } = $props()
 
@@ -101,7 +104,9 @@
   // Same steps as Medal's PC Storage limit.
   const limits = [1, 5, 10, 25, 50, 100, 250, 500]
 
-  const update = (patch: Partial<Settings>) => onchange({ ...settings, ...patch })
+  /** Throws: for callers that show the reason next to the control. */
+  const save = (patch: Partial<Settings>) => onchange({ ...settings, ...patch })
+  const update = (patch: Partial<Settings>) => save(patch).catch((e) => onerror(String(e)))
 
   // Recording
   const hz = $derived(caps?.display_hz ? Math.round(caps.display_hz) : null)
@@ -226,7 +231,7 @@
     if (typeof file !== 'string') return
     try {
       const sound = await api.importSound(file, slot)
-      await update(slot === 'clip' ? { clip_sound: sound } : { screenshot_sound: sound })
+      await save(slot === 'clip' ? { clip_sound: sound } : { screenshot_sound: sound })
       api.previewSound(sound, slot, settings.sound_volume)
     } catch (e) {
       soundError = String(e)
@@ -709,19 +714,19 @@
                   ? 'If nothing happens, another app may own this key.'
                   : undefined}
             >
-              <HotkeyBinder value={settings.hotkey} onbind={(hotkey) => update({ hotkey })} />
+              <HotkeyBinder value={settings.hotkey} onbind={(hotkey) => save({ hotkey })} />
             </Row>
             <Row
               title="Screenshot"
               description="Saved as PNG with the clips."
             >
-              <HotkeyBinder value={settings.screenshot_hotkey} onbind={(screenshot_hotkey) => update({ screenshot_hotkey })} />
+              <HotkeyBinder value={settings.screenshot_hotkey} onbind={(screenshot_hotkey) => save({ screenshot_hotkey })} />
             </Row>
             <Row
               title="Mark a moment"
               description="Shows on the clip’s timeline."
             >
-              <HotkeyBinder value={settings.marker_hotkey} onbind={(marker_hotkey) => update({ marker_hotkey })} />
+              <HotkeyBinder value={settings.marker_hotkey} onbind={(marker_hotkey) => save({ marker_hotkey })} />
             </Row>
           {/if}
           <Row
