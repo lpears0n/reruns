@@ -25,16 +25,22 @@ const seconds = (s) => Math.round(s * RATE)
 /** Rises from 0 to 1 over `attack` seconds (half a cosine: no click). */
 const attack = (t, a) => (t >= a ? 1 : 0.5 - 0.5 * Math.cos((Math.PI * t) / a))
 
+/** Long enough for any sound here to fade to nothing by itself. A sound
+ *  is written into this much room and trimmed afterwards ([`wav`]): one
+ *  stopped while still ringing clicks, and its echoes repeat the click. */
+const ROOM = 1.2
+
 /** One soft note: a sine with a little second and third harmonic, a
- *  quick attack and an exponential fade with time constant `decay`. */
-function note(out, at, hz, decay, level) {
+ *  gentle attack (12 ms unless given) and an exponential fade with time
+ *  constant `decay`. */
+function note(out, at, hz, decay, level, rise = 0.012) {
   for (let i = seconds(at); i < out.length; i++) {
     const t = i / RATE - at
     const tone =
       Math.sin(2 * Math.PI * hz * t) +
       0.16 * Math.sin(2 * Math.PI * 2 * hz * t) +
       0.05 * Math.sin(2 * Math.PI * 3 * hz * t)
-    out[i] += level * tone * attack(t, 0.006) * Math.exp(-t / decay)
+    out[i] += level * tone * attack(t, rise) * Math.exp(-t / decay)
   }
 }
 
@@ -96,19 +102,26 @@ function echo(samples, taps) {
  *  (47 ms did: the chime came out quieter with echo than without). */
 const IN_STEP = 2 / 293.665
 const CHIME_ECHO = [[7 * IN_STEP, 0.36], [14 * IN_STEP, 0.17], [21 * IN_STEP, 0.07]]
-/** And on the shutter: shorter, so the two clicks stay apart. */
-const SHUTTER_ECHO = [[0.037, 0.45], [0.083, 0.22]]
+/** And on the shutter: shorter, and between its two clicks (80 ms
+ *  apart), so they stay two. */
+const SHUTTER_ECHO = [[0.041, 0.45], [0.105, 0.22]]
 
 /** Scale `dry` so its loudest sample is at `peakDb`, add its echo on
  *  top (so the echo makes the sound fuller, not the sound itself
- *  quieter to make room for it), fade the last 15 ms to silence, and
- *  wrap as a WAV. */
+ *  quieter to make room for it), and wrap as a WAV. The file ends once
+ *  the sound has faded to a five-hundredth of its peak (-54 dB), with a
+ *  40 ms fade to exact silence over what is left. */
 function wav(dry, taps, peakDb) {
   const peak = 10 ** (peakDb / 20)
   const loudest = dry.reduce((m, s) => Math.max(m, Math.abs(s)), 0)
-  const samples = echo(dry, taps)
-  const fade = seconds(0.015)
-  for (let i = 0; i < fade; i++) samples[samples.length - 1 - i] *= i / fade
+  const whole = echo(dry, taps)
+  let last = whole.length - 1
+  while (last > 0 && Math.abs(whole[last]) < loudest / 500) last--
+  const fade = seconds(0.04)
+  const samples = whole.slice(0, Math.min(whole.length, last + fade))
+  for (let i = 0; i < fade; i++) {
+    samples[samples.length - 1 - i] *= 0.5 - 0.5 * Math.cos((Math.PI * i) / fade)
+  }
   const data = Buffer.alloc(44 + samples.length * 2)
   data.write('RIFF', 0)
   data.writeUInt32LE(36 + samples.length * 2, 4)
@@ -127,30 +140,31 @@ function wav(dry, taps, peakDb) {
 }
 
 /** Clip saved: two soft notes, the second a fifth above the first
- *  (D5 then A5), like a small "got it", with a short echo. */
+ *  (D5 then A5), like a small "got it", with a short echo. Unhurried:
+ *  the second note comes 110 ms after the first and rings a while. */
 function clipSaved() {
-  const out = new Float64Array(seconds(0.27))
-  note(out, 0, 587.33, 0.05, 0.9)
-  note(out, 0.085, 880.0, 0.07, 1.0)
+  const out = new Float64Array(seconds(ROOM))
+  note(out, 0, 587.33, 0.065, 0.9)
+  note(out, 0.11, 880.0, 0.09, 1.0)
   return wav(out, CHIME_ECHO, CHIME_PEAK_DB)
 }
 
-/** Screenshot: a camera shutter in miniature. Two bright clicks 60 ms
+/** Screenshot: a camera shutter in miniature. Two bright clicks 80 ms
  *  apart (open, close), the first with a faint low thump under it. */
 function screenshot() {
-  const out = new Float64Array(seconds(0.15))
-  click(out, 0, 3200, 1.2, 0.007, 1.0, 1)
-  note(out, 0, 150, 0.018, 0.35)
-  click(out, 0.06, 2300, 1.4, 0.011, 0.8, 2)
+  const out = new Float64Array(seconds(ROOM))
+  click(out, 0, 3200, 1.2, 0.009, 1.0, 1)
+  note(out, 0, 150, 0.022, 0.35, 0.004)
+  click(out, 0.08, 2300, 1.4, 0.014, 0.8, 2)
   return wav(out, SHUTTER_ECHO, SHUTTER_PEAK_DB)
 }
 
 /** A save that didn't work: the chime's two notes the other way round
  *  and an octave down (A4 then D4), so it reads as "no" without a buzz. */
 function saveFailed() {
-  const out = new Float64Array(seconds(0.3))
-  note(out, 0, 440.0, 0.06, 1.0)
-  note(out, 0.1, 293.66, 0.08, 0.9)
+  const out = new Float64Array(seconds(ROOM))
+  note(out, 0, 440.0, 0.075, 1.0)
+  note(out, 0.13, 293.66, 0.1, 0.9)
   return wav(out, CHIME_ECHO, CHIME_PEAK_DB)
 }
 

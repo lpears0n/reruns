@@ -865,6 +865,16 @@ behaves changed.
   reflection adds to its note: the first try at 47 ms arrived out of
   step and made the chime quieter (a comb filter). Chime over its first
   270 ms: -22.8 dB mean, from -24.9.
+- **Clicks removed, sounds slowed (owner: "clippy, not cleanly made"):**
+  each sound was written into a buffer that ended while it still rang
+  (the chime at 270 ms, at 7% of its level), and the echo copied that
+  cut two or three times: kinks 50–440 times the usual size at 265,
+  315 and 365 ms. Sounds are now written into 1.2 s of room, fade out
+  by themselves, get their echo, and are trimmed where they fall under
+  -54 dB of the peak with a 40 ms cosine fade; the largest kink left is
+  the first sample of the attack. Notes rise over 12 ms (was 6), come
+  110 ms apart (was 85) and ring longer; the shutter's clicks are 80 ms
+  apart (was 60). Files are 784 / 285 / 872 ms, most of it a quiet tail.
 - **Screenshots have their own default** (`system::Cue`): with
   `screenshot_sound` unset they play the shutter, unless the clip sound
   is a file of the user's, which they still follow. Settings shows
