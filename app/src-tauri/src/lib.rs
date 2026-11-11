@@ -658,6 +658,9 @@ async fn render_clip(
             let _ = app.emit(service::CLIP_SAVED, &result);
             result
         });
+    // A window hidden in the tray was kept for this render: free it once
+    // its page has had the result.
+    free_main_later(&app);
     // An update that was waiting for this render (however it ended).
     tauri::async_runtime::spawn(updates::install_waiting(app.clone()));
     done
