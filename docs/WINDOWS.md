@@ -39,7 +39,7 @@ compositor's copy is the only extra work the GPU does.
   and how it does for frame pacing next to monitor capture (which made
   Windows compose the game and caused constant hitching in Rainbow Six
   Siege with G-Sync on), is still to be confirmed on real machines.
-- **In-game popup** ("Ready to record", "Clip saved"): a transparent,
+- **In-game popup** ("Recording <game>", "Clip saved"): a transparent,
   click-through, never-focused window kept on top of the game for a few
   seconds, not a hook into the game (which anti-cheat flags). It is shown
   with `SW_SHOWNOACTIVATE` so a fullscreen game keeps focus, placed at the
@@ -54,7 +54,7 @@ compositor's copy is the only extra work the GPU does.
   (its monitor's, if the window was tiny then); every frame is scaled
   to it on the GPU, letterboxed if the shape changed. Repeated failures
   back off (at once, 5 s, 15 s, 30 s, then every minute) and a restart
-  keeps the play session (no second "Ready to record").
+  keeps the play session (no second "Recording <game>").
 - The capture source now runs at the recording frame rate. Left to
   itself it settled on 30 fps and every clip had each frame twice.
 - The app logs to `%LOCALAPPDATA%\gg.reruns.app\logs\Reruns.log` (there is

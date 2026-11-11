@@ -2,23 +2,20 @@
    card sits in its top-right corner and everything else stays see-through.
    Sizes are design units: one unit is a pixel on a 1080-line screen, and
    the page zooms to fill the window, which the backend sizes from the
-   game's resolution (see overlay.ts). Tokens match app.css (kept literal:
-   this page loads without Tailwind). */
+   game's resolution (see overlay.ts).
+
+   It follows docs/DESIGN.md like the app does, from the same tokens: the
+   4 px grid, the app's type roles, one coloured element per card (the
+   recording dot or the accent glyph), one shadow, and motion under
+   200 ms that only fades and slides. It is over someone's game: it says
+   one thing and gets out of the way. */
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/archivo/wdth.css';
+@import './tokens.css';
 
 :root {
-  --accent: oklch(72% 0.19 50);
-  --on-accent: oklch(14% 0.004 270);
-  --surface: oklch(19% 0.005 270 / 96%);
-  --line: oklch(100% 0 0 / 12%);
-  --line-2: oklch(100% 0 0 / 18%);
-  --fg: oklch(100% 0 0 / 94%);
-  --fg-2: oklch(100% 0 0 / 66%);
-  --danger: oklch(66% 0.21 15);
-  /* The one shadow floating surfaces get (docs/DESIGN.md 2.4). */
-  --shadow: 0 8px 24px oklch(0% 0 0 / 45%);
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Set from the user's Appearance choice (overlay.ts). */
+  --accent: var(--t-accent);
   color-scheme: dark;
 }
 
@@ -29,84 +26,69 @@ body {
   background: transparent;
   overflow: hidden;
   user-select: none;
-  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
+  font-family: var(--t-font-sans);
+  font-weight: 460;
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Room around the card for its shadow and its slide in from the right. */
+/* Room around the card: off the game's edge, and space for the shadow
+   below it and the short slide in from the right. */
 body {
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;
-  padding: 24px 24px 32px;
+  padding: 16px 16px 32px 32px;
   box-sizing: border-box;
 }
 
 .popup {
-  /* Ready is about recording (red); the rest are about what was kept. */
-  --tone: var(--accent);
-  position: relative;
   display: flex;
   align-items: center;
-  gap: 14px;
-  min-width: 280px;
+  gap: 12px;
   max-width: 100%;
   box-sizing: border-box;
-  padding: 14px 22px 14px 14px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  color: var(--fg);
+  padding: 12px 16px 12px 12px;
+  border: 1px solid var(--t-line-strong);
+  border-radius: var(--t-radius-surface);
+  /* Nearly solid: a game behind it is busy, and blur is off the table. */
+  background: color-mix(in oklch, var(--t-panel) 96%, transparent);
+  box-shadow: var(--t-shadow-overlay);
+  color: var(--t-fg);
   opacity: 0;
-  transform: translateX(28px);
+  transform: translateX(8px);
   transition:
-    opacity 140ms ease-in,
-    transform 140ms ease-in;
-}
-
-.popup[data-kind='ready'] {
-  --tone: var(--danger);
+    opacity 100ms ease-in,
+    transform 100ms ease-in;
 }
 
 .popup.in {
   opacity: 1;
   transform: none;
   transition:
-    opacity 160ms ease-out,
-    transform 220ms var(--ease-out);
+    opacity 150ms ease-out,
+    transform 150ms ease-out;
 }
 
-/* The icon: a recording dot for Ready, the accent with a dark glyph for
-   everything that was saved or marked. */
-.tile {
-  position: relative;
+/* The mark: what happened, at a glance. A recording dot for Ready, the
+   accent glyph for what was kept. It is the card's only colour. */
+.mark {
   display: grid;
   place-items: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-.popup.in .tile {
-  animation: pop 320ms cubic-bezier(0.34, 1.56, 0.64, 1) 40ms both;
-}
-
-.popup[data-kind='ready'] .tile {
-  background: oklch(100% 0 0 / 7%);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--t-radius-card);
+  background: var(--t-line);
+  color: var(--accent);
 }
 
 .rec {
   display: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: var(--danger);
-  /* A static ring, drawn with spread only: no blur, no glow. */
-  box-shadow: 0 0 0 5px color-mix(in oklch, var(--danger) 22%, transparent);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--t-danger);
 }
 
 .popup[data-kind='ready'] .rec {
@@ -115,27 +97,13 @@ body {
 
 .glyph {
   display: none;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.25;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.check {
-  stroke-width: 3;
-}
-
-.check path {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 0;
-}
-
-/* The check draws itself once the tile has landed. */
-.popup.in .check path {
-  animation: draw 280ms cubic-bezier(0.65, 0, 0.35, 1) 160ms both;
 }
 
 .popup[data-kind='saved'] .check,
@@ -147,115 +115,57 @@ body {
 .text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   min-width: 0;
 }
 
 .title {
-  font-family: 'Archivo Variable', 'Inter Variable', system-ui, sans-serif;
-  font-stretch: 112%;
-  font-size: 19px;
-  line-height: 24px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-
-.detail {
   overflow: hidden;
-  font-size: 14px;
-  line-height: 22px;
-  color: var(--fg-2);
+  font-family: var(--t-font-display);
+  font-stretch: 112%;
+  font-size: var(--t-text-title);
+  line-height: var(--t-text-title-line);
+  font-weight: 600;
+  letter-spacing: -0.01em;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-/* A key cap: raised by a heavier bottom edge. */
+.detail {
+  overflow: hidden;
+  font-size: var(--t-text-secondary);
+  line-height: var(--t-text-secondary-line);
+  color: var(--t-fg-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A key cap, as the app draws them. */
 kbd {
   display: inline-block;
-  min-width: 22px;
+  min-width: 16px;
   box-sizing: border-box;
   margin: 0 2px;
-  padding: 0 7px;
-  border: 1px solid var(--line-2);
-  border-bottom-width: 2px;
-  border-radius: 5px;
-  background: oklch(100% 0 0 / 8%);
-  font: 650 12px/19px 'Inter Variable', system-ui, sans-serif;
+  padding: 0 4px;
+  border: 1px solid var(--t-line-strong);
+  border-radius: var(--t-radius-chip);
+  background: var(--t-line);
+  font-family: var(--t-font-sans);
+  font-size: var(--t-text-caption);
+  line-height: var(--t-text-caption-line);
+  font-weight: 500;
   text-align: center;
-  color: var(--fg);
-  vertical-align: 1px;
+  color: var(--t-fg);
 }
 
-/* How long the popup stays: runs down along the bottom edge. */
-.life {
-  position: absolute;
-  inset: auto 0 0;
-  height: 3px;
-  background: var(--tone);
-  opacity: 0.85;
-  transform: scaleX(0);
-  transform-origin: left;
-}
-
-.popup.in .life {
-  animation: life var(--life, 3s) linear both;
-}
-
-@keyframes pop {
-  from {
-    transform: scale(0.5);
-  }
-  to {
-    transform: none;
-  }
-}
-
-@keyframes draw {
-  from {
-    stroke-dashoffset: 1;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-@keyframes life {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
-  }
-}
-
-/* Reduced motion: a plain fade, nothing moves. */
+/* Reduced motion (the system's setting, or the app's): a plain fade. */
 @media (prefers-reduced-motion: reduce) {
   .popup,
   .popup.in {
     transform: none;
-    transition: opacity 120ms linear;
-  }
-  .popup.in .tile,
-  .popup.in .check path {
-    animation: none;
-  }
-  .life {
-    display: none;
   }
 }
 
 .reduce-motion .popup,
 .reduce-motion .popup.in {
   transform: none;
-  transition: opacity 120ms linear;
-}
-
-.reduce-motion .popup.in .tile,
-.reduce-motion .popup.in .check path {
-  animation: none;
-}
-
-.reduce-motion .life {
-  display: none;
 }

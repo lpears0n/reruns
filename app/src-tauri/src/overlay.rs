@@ -1,4 +1,4 @@
-//! The in-game popup: "Ready to record" when a game starts recording,
+//! The in-game popup: "Recording <game>" when a game starts recording,
 //! "Clip saved" / "Screenshot saved" on a save, "Moment marked" on a
 //! marker. Windows only.
 //!
@@ -45,14 +45,14 @@ impl Popup {
     pub fn ready(game: &str, hotkey: &str) -> Self {
         Self {
             kind: Kind::Ready,
-            title: "Ready to record".into(),
-            detail: game.into(),
+            title: format!("Recording {game}"),
+            detail: String::new(),
             key: (!hotkey.is_empty()).then(|| hotkey.into()),
             ms: 3500,
         }
     }
 
-    pub fn saved(kind: Kind, game: &str) -> Self {
+    pub fn saved(kind: Kind, detail: &str) -> Self {
         Self {
             kind,
             title: match kind {
@@ -61,7 +61,7 @@ impl Popup {
                 _ => "Clip saved",
             }
             .into(),
-            detail: game.into(),
+            detail: detail.into(),
             key: None,
             ms: 2500,
         }
@@ -96,6 +96,8 @@ fn units(width: i32, height: i32) -> f64 {
     (lines / 1080.0).clamp(0.7, 3.0)
 }
 
+#[cfg(windows)]
+pub use imp::set_game;
 pub use imp::{init, show};
 
 #[cfg(windows)]
@@ -103,7 +105,7 @@ mod imp {
     use std::{
         sync::{
             Mutex,
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering},
         },
         time::Duration,
     };
@@ -116,8 +118,9 @@ mod imp {
         Foundation::{HWND, POINT, RECT},
         Graphics::Gdi::ClientToScreen,
         UI::WindowsAndMessaging::{
-            GetClientRect, GetForegroundWindow, HWND_TOPMOST, SW_HIDE, SW_SHOWNOACTIVATE,
-            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos, ShowWindow,
+            GetClientRect, GetForegroundWindow, GetWindowThreadProcessId, HWND_TOPMOST, SW_HIDE,
+            SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+            SetWindowPos, ShowWindow,
         },
     };
 
@@ -137,6 +140,23 @@ mod imp {
     static READY: AtomicBool = AtomicBool::new(false);
     /// The popup to show once the page is ready.
     static PENDING: Mutex<Option<Popup>> = Mutex::new(None);
+
+    /// The window being recorded (0: none).
+    static GAME: AtomicIsize = AtomicIsize::new(0);
+
+    /// Tell the overlay which window is being recorded, so popups only
+    /// show over that game.
+    pub fn set_game(hwnd: Option<isize>) {
+        GAME.store(hwnd.unwrap_or(0), Ordering::SeqCst);
+    }
+
+    /// The process a window belongs to (0 for a stale handle).
+    fn pid(hwnd: HWND) -> u32 {
+        let mut pid = 0;
+        // SAFETY: writes the owning process id into `pid`.
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        pid
+    }
 
     /// Get ready to show popups. The window itself, a webview of its own,
     /// is only made for the first popup: a launch that never records a
@@ -170,8 +190,9 @@ mod imp {
         Ok(())
     }
 
-    /// Show `popup` over the game in the foreground. Nothing happens when
-    /// Reruns itself is in front: the app shows its own toast then. The
+    /// Show `popup` over the recorded game when it is in the foreground.
+    /// Nothing happens when Reruns itself is in front: the app shows its
+    /// own toast then. The
     /// first popup waits for the window to be made and its page to load.
     pub fn show(app: &AppHandle, popup: Popup) {
         if READY.load(Ordering::SeqCst) {
@@ -205,6 +226,14 @@ mod imp {
             .filter_map(|w| w.hwnd().ok())
             .any(|h| h.0 == fg.0);
         if fg.0.is_null() || ours {
+            return;
+        }
+        // Only over the recorded game, not a launcher or another app in
+        // front of it. By process: a game may put another of its windows
+        // in front. shortcut: a popup that arrives while the game is behind
+        // is dropped, not shown later; queue it if "Recording" goes missing.
+        let game = GAME.load(Ordering::SeqCst);
+        if game != 0 && pid(fg) != pid(HWND(game as *mut _)) {
             return;
         }
 

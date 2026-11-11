@@ -66,7 +66,7 @@ Releases, updates and Windows code signing: [docs/RELEASING.md](docs/RELEASING.m
   seconds at most), with its own volume and, if you like, a different one
   for screenshots: Settings → General. The file is copied in, so moving
   the original doesn't break it.
-- On Windows a small popup over the game says **Ready to record** when a
+- On Windows a small popup over the game says **Recording** and the game's name when a
   game starts recording and **Clip saved** when you clip. It never ends up
   in clips; turn it off under Settings → General.
 - Press `F9` in a game for a screenshot: the newest frame from the replay

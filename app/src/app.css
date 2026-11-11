@@ -1,9 +1,11 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/archivo/wdth.css';
 @import 'tailwindcss';
+@import './tokens.css';
 
 /*
-  Design tokens. Everything in the UI derives from these, so a change here
+  Design tokens, mapped into Tailwind from tokens.css (shared with the
+  in-game popup). Everything in the UI derives from these, so a change there
   moves the whole app. See docs/DESIGN.md.
 
   Surfaces are steps of lightness on one base tint (OKLCH keeps the steps
@@ -11,57 +13,57 @@
   by the Appearance settings (prefs.svelte.ts) on <html>.
 */
 @theme {
-  --font-sans: 'Inter Variable', Inter, system-ui, sans-serif;
+  --font-sans: var(--t-font-sans);
   /* Headings and numbers: semi-expanded for a sportier read. */
-  --font-display: 'Archivo Variable', 'Inter Variable', system-ui, sans-serif;
+  --font-display: var(--t-font-display);
 
   /* Surfaces, darkest to lightest. Overlay is for things that float. */
-  --color-canvas: oklch(14% 0.004 270);
-  --color-panel: oklch(17.5% 0.004 270);
-  --color-raised: oklch(21% 0.005 270);
-  --color-overlay: oklch(24.5% 0.005 270);
+  --color-canvas: var(--t-canvas);
+  --color-panel: var(--t-panel);
+  --color-raised: var(--t-raised);
+  --color-overlay: var(--t-overlay);
 
   /* Hairlines. */
-  --color-line: oklch(100% 0 0 / 8%);
-  --color-line-strong: oklch(100% 0 0 / 14%);
+  --color-line: var(--t-line);
+  --color-line-strong: var(--t-line-strong);
 
   /* Text. */
-  --color-fg: oklch(100% 0 0 / 92%);
-  --color-fg-2: oklch(100% 0 0 / 64%);
-  --color-muted: oklch(100% 0 0 / 46%);
+  --color-fg: var(--t-fg);
+  --color-fg-2: var(--t-fg-2);
+  --color-muted: var(--t-muted);
 
   /* Accent is user-chosen; this is the default (orange). */
-  --color-accent: oklch(72% 0.19 50);
-  --color-on-accent: oklch(14% 0.004 270);
-  --color-danger: oklch(66% 0.21 15);
-  --color-ok: oklch(76% 0.16 160);
+  --color-accent: var(--t-accent);
+  --color-on-accent: var(--t-on-accent);
+  --color-danger: var(--t-danger);
+  --color-ok: var(--t-ok);
 
   /* Radii encode nesting: surface > card > control > chip. */
-  --radius-chip: 4px;
-  --radius-ctl: 6px;
-  --radius-card: 8px;
-  --radius-surface: 12px;
+  --radius-chip: var(--t-radius-chip);
+  --radius-ctl: var(--t-radius-ctl);
+  --radius-card: var(--t-radius-card);
+  --radius-surface: var(--t-radius-surface);
 
   /* One shadow, for floating overlays only. */
-  --shadow-overlay: 0 8px 24px oklch(0% 0 0 / 40%);
+  --shadow-overlay: var(--t-shadow-overlay);
 
   /* Type scale: six roles. */
-  --text-caption: 12px;
-  --text-caption--line-height: 16px;
-  --text-secondary: 13px;
-  --text-secondary--line-height: 18px;
+  --text-caption: var(--t-text-caption);
+  --text-caption--line-height: var(--t-text-caption-line);
+  --text-secondary: var(--t-text-secondary);
+  --text-secondary--line-height: var(--t-text-secondary-line);
   --text-body: 14px;
   --text-body--line-height: 20px;
-  --text-title: 15px;
-  --text-title--line-height: 20px;
+  --text-title: var(--t-text-title);
+  --text-title--line-height: var(--t-text-title-line);
   --text-page: 24px;
   --text-page--line-height: 28px;
   --text-display: 32px;
   --text-display--line-height: 36px;
 
   /* Durations: nothing in the library is slower than fast. */
-  --duration-fast: 120ms;
-  --duration-normal: 180ms;
+  --duration-fast: var(--t-duration-fast);
+  --duration-normal: var(--t-duration-normal);
 
   /* Layout. */
   --spacing-sidebar: 208px;

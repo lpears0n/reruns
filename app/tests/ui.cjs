@@ -545,10 +545,10 @@ async function overlayScenario(browser) {
   const fire = (payload) =>
     page.evaluate((p) => window[`_${window.__listeners['overlay-show']}`]({ event: 'overlay-show', id: 1, payload: p }), payload)
 
-  await fire({ kind: 'ready', title: 'Ready to record', detail: "Tom Clancy's Rainbow Six Siege", key: 'F8', ms: 3500 })
+  await fire({ kind: 'ready', title: "Recording Tom Clancy's Rainbow Six Siege", detail: '', key: 'F8', ms: 3500 })
   await page.waitForTimeout(300)
-  assert.equal(await page.locator('#title').textContent(), 'Ready to record')
-  assert.ok((await page.locator('#detail').textContent()).startsWith('Press F8 to clip'))
+  assert.equal(await page.locator('#title').textContent(), "Recording Tom Clancy's Rainbow Six Siege")
+  assert.equal(await page.locator('#detail').textContent(), 'Press F8 to clip')
   assert.ok(await page.locator('.rec').isVisible(), 'recording dot on ready')
   await page.screenshot({ path: path.join(out, 'overlay-ready.png') })
 
@@ -560,7 +560,7 @@ async function overlayScenario(browser) {
     assert.equal(await page.locator('.glyph:visible').count(), 1, `one glyph on ${kind}`)
   }
 
-  await fire({ kind: 'saved', title: 'Clip saved', detail: "Tom Clancy's Rainbow Six Siege", key: null, ms: 900 })
+  await fire({ kind: 'saved', title: 'Clip saved', detail: "Last 30\u2009s · Tom Clancy's Rainbow Six Siege", key: null, ms: 900 })
   await page.waitForTimeout(500)
   assert.equal(await page.locator('#title').textContent(), 'Clip saved')
   assert.ok(await page.locator('.check').isVisible(), 'check mark on saved')

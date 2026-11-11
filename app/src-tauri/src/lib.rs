@@ -853,12 +853,11 @@ impl Saved {
 /// as configured. A clip's or screenshot's sound has played already, at
 /// the key press (`play_cue`); an edit's plays here, when it is rendered.
 fn announce_saved(app: &AppHandle, saved: Saved, path: &std::path::Path) {
-    let notify = app
-        .state::<AppState>()
-        .settings
-        .lock()
-        .unwrap()
-        .notify_on_save;
+    let (notify, replay_seconds) = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        (s.notify_on_save, s.replay_seconds)
+    };
     if matches!(saved, Saved::Edit) {
         play_cue(app, system::Cue::Clip);
     }
@@ -871,7 +870,12 @@ fn announce_saved(app: &AppHandle, saved: Saved, path: &std::path::Path) {
     if let Some(kind) = saved.popup()
         && overlay::enabled(app)
     {
-        overlay::show(app, overlay::Popup::saved(kind, &game));
+        // A clip says how much it kept; thin space before the unit.
+        let detail = match saved {
+            Saved::Clip => format!("Last {replay_seconds}\u{2009}s · {game}"),
+            _ => game.clone(),
+        };
+        overlay::show(app, overlay::Popup::saved(kind, &detail));
     }
     if notify {
         let app = app.clone();

@@ -536,6 +536,11 @@ impl AutoRecorder {
         self.active.as_ref().map(|a| &a.game)
     }
 
+    /// The window being recorded (its HWND).
+    pub fn window(&self) -> Option<isize> {
+        self.active.as_ref().map(|a| a.hwnd)
+    }
+
     pub fn status(&self) -> Option<Status> {
         self.active.as_ref().map(|a| a.recorder.status())
     }

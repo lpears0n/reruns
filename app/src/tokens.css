@@ -1,0 +1,56 @@
+/*
+  The design tokens both pages use: the app (app.css maps them into
+  Tailwind's theme) and the in-game popup (overlay.css, which loads
+  without Tailwind). One list, so the popup can't drift from the app.
+  See docs/DESIGN.md.
+
+  Surfaces are steps of lightness on one base tint (OKLCH keeps the steps
+  perceptually even). Text is white at fixed opacities.
+*/
+:root {
+  --t-font-sans: 'Inter Variable', Inter, system-ui, sans-serif;
+  /* Headings and numbers: semi-expanded for a sportier read. */
+  --t-font-display: 'Archivo Variable', 'Inter Variable', system-ui, sans-serif;
+
+  /* Surfaces, darkest to lightest. Overlay is for things that float. */
+  --t-canvas: oklch(14% 0.004 270);
+  --t-panel: oklch(17.5% 0.004 270);
+  --t-raised: oklch(21% 0.005 270);
+  --t-overlay: oklch(24.5% 0.005 270);
+
+  /* Hairlines. */
+  --t-line: oklch(100% 0 0 / 8%);
+  --t-line-strong: oklch(100% 0 0 / 14%);
+
+  /* Text. */
+  --t-fg: oklch(100% 0 0 / 92%);
+  --t-fg-2: oklch(100% 0 0 / 64%);
+  --t-muted: oklch(100% 0 0 / 46%);
+
+  /* Accent is user-chosen; this is the default (orange). */
+  --t-accent: oklch(72% 0.19 50);
+  --t-on-accent: oklch(14% 0.004 270);
+  --t-danger: oklch(66% 0.21 15);
+  --t-ok: oklch(76% 0.16 160);
+
+  /* Radii encode nesting: surface > card > control > chip. */
+  --t-radius-chip: 4px;
+  --t-radius-ctl: 6px;
+  --t-radius-card: 8px;
+  --t-radius-surface: 12px;
+
+  /* One shadow, for floating overlays only. */
+  --t-shadow-overlay: 0 8px 24px oklch(0% 0 0 / 40%);
+
+  /* The type roles the popup shares with the app. */
+  --t-text-caption: 12px;
+  --t-text-caption-line: 16px;
+  --t-text-secondary: 13px;
+  --t-text-secondary-line: 18px;
+  --t-text-title: 15px;
+  --t-text-title-line: 20px;
+
+  /* Durations: nothing in the library is slower than fast. */
+  --t-duration-fast: 120ms;
+  --t-duration-normal: 180ms;
+}

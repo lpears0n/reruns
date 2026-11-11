@@ -220,6 +220,9 @@ async fn run(
                 let Some(ev) = ev else { break };
                 let changed = match auto.handle(ev).await {
                     Ok(Some(change)) => {
+                        // Before the event below: its popup checks this.
+                        #[cfg(windows)]
+                        crate::overlay::set_game(auto.window());
                         if let Change::Started(g) = &change {
                             let _ = app.emit(RECORDING_STARTED, &g.name);
                         }
