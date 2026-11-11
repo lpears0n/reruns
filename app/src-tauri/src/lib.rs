@@ -46,6 +46,8 @@ pub(crate) struct AppState {
     media: media_server::MediaServer,
     /// Set by `cancel_render` to stop the render in progress (one at a time).
     render_cancel: Arc<AtomicBool>,
+    /// An edit is being rendered: an update must not restart the app now.
+    pub(crate) rendering: Arc<AtomicBool>,
     thumbs: thumbs::Thumbnailer,
     /// Folder watcher for the current clips folder; replaced when it changes.
     watcher: Mutex<Option<watcher::Handle>>,
@@ -643,12 +645,14 @@ async fn render_clip(
         })),
         cancel: Some(cancel),
     };
-    tauri::async_runtime::spawn_blocking(move || {
+    let rendering = state.rendering.clone();
+    rendering.store(true, Ordering::Relaxed);
+    let rendered = tauri::async_runtime::spawn_blocking(move || {
         clip_core::export::render_with(&path, &out, &edit, encoder, &cfg, control)
     })
-    .await
-    .map_err(err)?
-    .map_err(|e| format!("{e:#}"))?;
+    .await;
+    rendering.store(false, Ordering::Relaxed);
+    rendered.map_err(err)?.map_err(|e| format!("{e:#}"))?;
     library::copy_meta(&source, &result, start, end);
     let _ = app.emit(service::CLIP_SAVED, &result);
     Ok(result)
@@ -844,7 +848,42 @@ fn point_gstreamer_at_bundled_plugins() {
             // version must not be mixed in.
             std::env::set_var("GST_PLUGIN_SYSTEM_PATH", &plugins);
         }
+        // The plugin list GStreamer caches, in a file of this version's
+        // own. Its default is one file per user shared by every GStreamer
+        // on the PC (another install rewrites it for its own plugins, and
+        // each then rescans at its next start) in a folder disk clean-up
+        // empties.
+        if std::env::var_os("GST_REGISTRY").is_none()
+            && let Some(dir) = dirs::data_local_dir().map(|d| d.join("gg.reruns.app"))
+        {
+            let name = registry_file_name(env!("CARGO_PKG_VERSION"));
+            let _ = std::fs::create_dir_all(&dir);
+            // Earlier versions' lists are no use to anyone.
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let file = entry.file_name();
+                    let file = file.to_string_lossy();
+                    if is_registry_file(&file) && *file != name {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+            // SAFETY: as above.
+            unsafe {
+                std::env::set_var("GST_REGISTRY", dir.join(name));
+            }
+        }
     }
+}
+
+#[cfg(windows)]
+fn registry_file_name(version: &str) -> String {
+    format!("gst-registry-{version}.bin")
+}
+
+#[cfg(windows)]
+fn is_registry_file(name: &str) -> bool {
+    name.starts_with("gst-registry-") && name.ends_with(".bin")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -926,6 +965,7 @@ pub fn run() {
                 encoders: tokio::sync::OnceCell::new(),
                 media,
                 render_cancel: Arc::default(),
+                rendering: Arc::default(),
                 thumbs: thumbs::Thumbnailer::start(app.handle().clone()),
                 watcher: Mutex::new(None),
                 meter: tokio::sync::Mutex::new(None),
@@ -1019,13 +1059,15 @@ pub fn run() {
                     overlay::show(&handle, overlay::Popup::ready(&game, &hotkey));
                 });
             }
-            if let Err(e) = overlay::create(app.handle()) {
-                tracing::warn!("in-game overlay unavailable: {e}");
-            }
+            overlay::init(app.handle());
             // The window starts hidden (tauri.conf.json) so a login launch
             // can stay in the tray without flashing.
             let autostarted = std::env::args().any(|a| a == system::AUTOSTART_ARG);
+            // After "Update and restart" the window comes back, even from
+            // a copy that was started at login.
+            let updated = updates::take_marker(app.handle());
             let in_tray = autostarted
+                && !updated
                 && app
                     .state::<AppState>()
                     .settings
@@ -1071,6 +1113,8 @@ pub fn run() {
             updates::found_update,
             updates::check_update,
             updates::install_update,
+            updates::cancel_update,
+            updates::updated_to,
             ignore_current_game,
             list_clips,
             delete_clip,

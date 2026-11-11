@@ -382,6 +382,7 @@
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onFocus)
     const tick = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
       const recording = status?.state === 'recording'
       if (recording || Date.now() - now >= 60_000) now = Date.now()
     }, 1000)
@@ -389,12 +390,16 @@
     // The first check runs as the app starts, maybe before this page
     // listened: once listening, ask what it found.
     updates.then(() => api.foundUpdate()).then((u) => u && announceUpdate(u))
+    api.updatedTo().then((v) => v && notify(`Updated to ${v}`))
     const unlisten = [
       updates,
       onStatusChanged((s) => {
         status = s
         // A game started or stopped: "playing now" and play time changed.
-        refreshLibrary()
+        // Not while the window is hidden in the tray: that would list the
+        // whole library twice per change during a game, for nobody.
+        // Coming back to the window refreshes (onFocus above).
+        if (document.visibilityState === 'visible') refreshLibrary()
       }),
       onClipSaved((path) => {
         notify(`Saved ${path.split(/[\\/]/).pop()}`)

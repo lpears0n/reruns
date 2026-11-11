@@ -96,17 +96,20 @@ fn units(width: i32, height: i32) -> f64 {
     (lines / 1080.0).clamp(0.7, 3.0)
 }
 
-pub use imp::{create, show};
+pub use imp::{init, show};
 
 #[cfg(windows)]
 mod imp {
     use std::{
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            Mutex,
+            atomic::{AtomicBool, AtomicU64, Ordering},
+        },
         time::Duration,
     };
 
     use tauri::{
-        AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+        AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
         WebviewWindowBuilder,
     };
     use windows::Win32::{
@@ -125,8 +128,31 @@ mod imp {
     /// Bumped by every show, so only the latest one's timer hides the window.
     static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-    /// Create the (hidden) overlay window. Call once, at startup.
-    pub fn create(app: &AppHandle) -> tauri::Result<()> {
+    /// The page says this once it listens for popups (see overlay.ts).
+    const READY_EVENT: &str = "overlay-ready";
+
+    /// The window is being made, or is there.
+    static CREATED: AtomicBool = AtomicBool::new(false);
+    /// The page is loaded and listening.
+    static READY: AtomicBool = AtomicBool::new(false);
+    /// The popup to show once the page is ready.
+    static PENDING: Mutex<Option<Popup>> = Mutex::new(None);
+
+    /// Get ready to show popups. The window itself, a webview of its own,
+    /// is only made for the first popup: a launch that never records a
+    /// game, or with the popup turned off, never pays for it.
+    pub fn init(app: &AppHandle) {
+        let handle = app.clone();
+        app.listen_any(READY_EVENT, move |_| {
+            READY.store(true, Ordering::SeqCst);
+            if let Some(popup) = PENDING.lock().unwrap().take() {
+                present(&handle, popup);
+            }
+        });
+    }
+
+    /// Create the (hidden) overlay window.
+    fn create(app: &AppHandle) -> tauri::Result<()> {
         let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("overlay.html".into()))
             .title("Reruns overlay")
             .inner_size(WIDTH, HEIGHT)
@@ -145,8 +171,28 @@ mod imp {
     }
 
     /// Show `popup` over the game in the foreground. Nothing happens when
-    /// Reruns itself is in front: the app shows its own toast then.
+    /// Reruns itself is in front: the app shows its own toast then. The
+    /// first popup waits for the window to be made and its page to load.
     pub fn show(app: &AppHandle, popup: Popup) {
+        if READY.load(Ordering::SeqCst) {
+            return present(app, popup);
+        }
+        // The newest popup wins if several arrive before the page is up.
+        *PENDING.lock().unwrap() = Some(popup);
+        if CREATED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        // Off this thread: it may be the event loop's, which the window
+        // is made on.
+        let app = app.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = create(&app) {
+                tracing::warn!("in-game overlay unavailable: {e}");
+            }
+        });
+    }
+
+    fn present(app: &AppHandle, popup: Popup) {
         let Some(window) = app.get_webview_window(LABEL) else {
             return;
         };
@@ -239,9 +285,7 @@ mod imp {
 
     use super::Popup;
 
-    pub fn create(_app: &AppHandle) -> tauri::Result<()> {
-        Ok(())
-    }
+    pub fn init(_app: &AppHandle) {}
 
     pub fn show(_app: &AppHandle, _popup: Popup) {}
 }

@@ -9,15 +9,22 @@
 //! (whose result the app offers in a prompt) and then every six hours, so
 //! nothing is downloaded while a game is being played. Downloading and
 //! installing happen when the user asks, and end with a restart.
+//!
+//! Installing ends this process on the spot (Windows: the installer is
+//! started and the app exits), which would throw away the replay buffer
+//! of a game being recorded. So an update downloaded while a game is
+//! recorded waits ([`Pending`]) and installs when that recording stops.
 
+use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_updater::UpdaterExt;
+use tauri::{AppHandle, Emitter, Listener, Manager, State};
+use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::AppState;
+use crate::{AppState, service};
 
 /// An update was found; the payload is an [`UpdateInfo`].
 pub const UPDATE_AVAILABLE: &str = "update-available";
@@ -26,6 +33,23 @@ pub const UPDATE_AVAILABLE: &str = "update-available";
 pub const UPDATE_PROGRESS: &str = "update-progress";
 
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// Longest a check may take: one small file.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest a download may take before it is given up as stalled.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+/// A downloaded update that waits for the recording to stop, and whether
+/// the download in progress was cancelled.
+#[derive(Default)]
+pub struct Pending {
+    update: Mutex<Option<(Update, Vec<u8>)>>,
+    cancel: tokio::sync::Notify,
+    downloading: AtomicBool,
+}
+
+/// The version this launch was updated to, until the page has said so.
+#[derive(Default)]
+pub struct Updated(Mutex<Option<String>>);
 /// After a failed check, as at login before the network is up: try again
 /// this soon, then twice as long each time, up to [`CHECK_EVERY`].
 const RETRY_FIRST: Duration = Duration::from_secs(60);
@@ -75,8 +99,24 @@ pub fn plugin(
 /// and the user hasn't turned it off.
 pub fn spawn_checks(app: &AppHandle) {
     app.manage(Found::default());
+    app.manage(Pending::default());
     if !configured(app.config()) {
         return;
+    }
+    // A downloaded update goes in when the game being recorded closes.
+    {
+        let handle = app.clone();
+        app.listen_any(service::STATUS_CHANGED, move |event| {
+            let status: serde_json::Value =
+                serde_json::from_str(event.payload()).unwrap_or_default();
+            if matches!(status["state"].as_str(), Some("recording" | "retrying")) {
+                return;
+            }
+            let waiting = handle.state::<Pending>().update.lock().unwrap().take();
+            if let Some((update, bytes)) = waiting {
+                install(&handle, &update, bytes);
+            }
+        });
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -140,7 +180,9 @@ async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
         return Err("updates aren't set up in this build".into());
     }
     let update = app
-        .updater()
+        .updater_builder()
+        .timeout(CHECK_TIMEOUT)
+        .build()
         .map_err(|e| e.to_string())?
         .check()
         .await
@@ -173,35 +215,129 @@ pub async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
     check(&app).await
 }
 
-/// Download and install the newest release, then restart into it. On
-/// Windows the installer closes the app itself.
+/// Download the newest release and restart into it. While a game is
+/// being recorded the install waits for it to close instead (installing
+/// ends this process, and the replay buffer with it): the answer is then
+/// that game's name. Otherwise only a failure comes back.
 #[tauri::command]
-pub async fn install_update(app: AppHandle) -> Result<(), String> {
+pub async fn install_update(app: AppHandle) -> Result<Option<String>, String> {
     if !configured(app.config()) {
         return Err("updates aren't set up in this build".into());
     }
+    if app.state::<AppState>().rendering.load(Ordering::Relaxed) {
+        return Err("An edit is rendering. Update when it's done.".into());
+    }
+    let pending = app.state::<Pending>();
+    if pending.downloading.swap(true, Ordering::SeqCst) {
+        return Err("The update is already downloading.".into());
+    }
+    let downloaded = download(&app, &pending).await;
+    pending.downloading.store(false, Ordering::SeqCst);
+    let (update, bytes) = downloaded?;
+
+    let status = app.state::<AppState>().service.status().await.ok();
+    if let Some(status) = status
+        && matches!(
+            status.state,
+            service::State::Recording | service::State::Retrying
+        )
+    {
+        let game = status.game.unwrap_or_else(|| "the game".into());
+        tracing::info!(version = %update.version, %game, "update downloaded; waiting for the recording to stop");
+        *pending.update.lock().unwrap() = Some((update, bytes));
+        return Ok(Some(game));
+    }
+    install(&app, &update, bytes);
+    Ok(None)
+}
+
+/// Stop the download in progress, or forget an update that is waiting
+/// for a game to close.
+#[tauri::command]
+pub fn cancel_update(pending: State<Pending>) {
+    pending.cancel.notify_waiters();
+    pending.update.lock().unwrap().take();
+}
+
+async fn download(app: &AppHandle, pending: &Pending) -> Result<(Update, Vec<u8>), String> {
     let update = app
-        .updater()
+        .updater_builder()
+        .timeout(DOWNLOAD_TIMEOUT)
+        .build()
         .map_err(|e| e.to_string())?
         .check()
         .await
         .map_err(|e| e.to_string())?
         .ok_or("already up to date")?;
-    tracing::info!(version = %update.version, "installing update");
+    tracing::info!(version = %update.version, "downloading update");
     let progress = app.clone();
     let mut done = 0u64;
-    update
-        .download_and_install(
+    let bytes = tokio::select! {
+        bytes = update.download(
             move |chunk, total| {
                 done += chunk as u64;
                 let fraction = total.map(|t| (done as f64 / t.max(1) as f64).min(1.0));
                 let _ = progress.emit(UPDATE_PROGRESS, fraction);
             },
             || {},
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    app.restart()
+        ) => bytes.map_err(|e| e.to_string())?,
+        () = pending.cancel.notified() => return Err("Download cancelled".into()),
+    };
+    Ok((update, bytes))
+}
+
+/// Install `bytes` and restart into the new version. On Windows this
+/// starts the installer and ends the process; it returns only on failure.
+fn install(app: &AppHandle, update: &Update, bytes: Vec<u8>) {
+    tracing::info!(version = %update.version, "installing update");
+    // The relaunch gets this launch's arguments, `--autostart` included,
+    // and would come back hidden in the tray: leave word that it follows
+    // an update, so it opens its window and says so.
+    let marker = marker();
+    if let Some(dir) = marker.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&marker, &update.version);
+    match update.install(bytes) {
+        Ok(()) => app.restart(),
+        Err(e) => {
+            let _ = std::fs::remove_file(&marker);
+            tracing::warn!("installing the update failed: {e}");
+            let _ = app.emit(UPDATE_FAILED, e.to_string());
+        }
+    }
+}
+
+/// Installing failed after the download (the command had already
+/// answered if it was waiting for a game); the payload is the reason.
+pub const UPDATE_FAILED: &str = "update-failed";
+
+fn marker() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("reruns/updated-to")
+}
+
+/// Call once at start-up: whether this launch follows an update to the
+/// version now running. A marker for any other version is from an
+/// install that didn't happen, and is dropped.
+pub fn take_marker(app: &AppHandle) -> bool {
+    let marker = marker();
+    let version = std::fs::read_to_string(&marker).ok();
+    let _ = std::fs::remove_file(&marker);
+    let current = app.package_info().version.to_string();
+    let updated = version
+        .map(|v| v.trim().to_owned())
+        .filter(|v| *v == current);
+    let yes = updated.is_some();
+    app.manage(Updated(Mutex::new(updated)));
+    yes
+}
+
+/// The version this launch was just updated to; answers once.
+#[tauri::command]
+pub fn updated_to(updated: State<Updated>) -> Option<String> {
+    updated.0.lock().unwrap().take()
 }
 
 #[cfg(test)]

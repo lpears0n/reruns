@@ -2,7 +2,7 @@
 // taking focus from the game) and sends what to say; this page only draws
 // the card and fades it out before the window is hidden again.
 
-import { listen } from '@tauri-apps/api/event'
+import { emit, listen } from '@tauri-apps/api/event'
 import './overlay.css'
 import { ACCENTS, type Accent } from './lib/prefs.svelte'
 
@@ -73,4 +73,6 @@ export function show(p: Popup) {
   fade = setTimeout(() => popup.classList.remove('in'), visible)
 }
 
-listen<Popup>('overlay-show', (e) => show(e.payload))
+// The window is made for the first popup, which waits until this page
+// says it is listening.
+listen<Popup>('overlay-show', (e) => show(e.payload)).then(() => emit('overlay-ready'))

@@ -227,7 +227,13 @@ export const api = {
   foundUpdate: () => invoke<UpdateInfo | null>('found_update'),
   checkUpdate: () => invoke<UpdateInfo | null>('check_update'),
   /** Downloads, installs and restarts; resolves only on failure. */
-  installUpdate: () => invoke<void>('install_update'),
+  /** Restarts into the new version, unless a game is being recorded: then
+   *  it answers with the game's name and installs when that game closes. */
+  installUpdate: () => invoke<string | null>('install_update'),
+  /** Stop the download, or drop an update waiting for a game to close. */
+  cancelUpdate: () => invoke<void>('cancel_update'),
+  /** The version this launch was just updated to; answers once. */
+  updatedTo: () => invoke<string | null>('updated_to'),
 }
 
 export const onRenderProgress = (f: (p: { path: string; fraction: number }) => void): Promise<UnlistenFn> =>

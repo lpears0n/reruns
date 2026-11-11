@@ -12,18 +12,20 @@
   /** undefined: not installing; null: size unknown; else 0..1. */
   let progress = $state<number | null | undefined>(undefined)
   let error = $state<string | null>(null)
+  /** The game whose recording the downloaded update is waiting on. */
+  let waitingFor = $state<string | null>(null)
 
   async function install() {
     error = null
     progress = null
     const stop = await onUpdateProgress((f) => (progress = f))
     try {
-      // Restarts into the new version; only a failure comes back.
-      await api.installUpdate()
+      // Restarts into the new version, or waits for the game to close.
+      waitingFor = await api.installUpdate()
     } catch (e) {
       error = String(e)
-      progress = undefined
     } finally {
+      progress = undefined
       stop()
     }
   }
@@ -59,7 +61,15 @@
       <div class="mt-5 h-1.5 overflow-hidden rounded-full bg-line-strong" role="progressbar" aria-label="Downloading" aria-valuenow={progress == null ? undefined : Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100}>
         <div class="h-full rounded-full bg-accent transition-[width] duration-normal" style:width="{(progress ?? 0.1) * 100}%"></div>
       </div>
-      <div class="mt-2 text-secondary text-muted">Downloading…</div>
+      <div class="mt-2 flex items-center justify-between text-secondary text-muted">
+        <span>Downloading…</span>
+        <button class="btn" onclick={() => api.cancelUpdate()}>Cancel</button>
+      </div>
+    {:else if waitingFor}
+      <div class="mt-4 text-secondary text-fg-2">Downloaded. Installs when {waitingFor} closes.</div>
+      <div class="mt-5 flex justify-end gap-2">
+        <button class="btn-primary" onclick={onclose}>OK</button>
+      </div>
     {:else}
       {#if error}
         <div class="mt-4 text-secondary text-danger">{error}</div>
