@@ -30,7 +30,7 @@ use serde::Serialize;
 use service::{Service, Status};
 use settings::Settings;
 use tauri::{
-    AppHandle, Emitter, Listener, Manager, State, WindowEvent,
+    AppHandle, Emitter, Listener, Manager, RunEvent, State, WebviewWindowBuilder, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -710,12 +710,81 @@ fn allow_steam_art(app: &AppHandle) {
     }
 }
 
+const MAIN: &str = "main";
+
+/// Hidden in the tray this long, the window is closed for real: its
+/// webview is the app's largest piece of memory (100–250 MB) and all of
+/// it is idle while a game is played. Opening it again builds a new one,
+/// which paints from the cached library.
+const FREE_MAIN_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Bumped whenever the window is shown or hidden, so a pending
+/// [`free_main_later`] only acts if nothing happened since.
+static MAIN_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Show the main window, building it first if there is none (a launch
+/// into the tray makes none, and one left hidden is closed after a
+/// while).
 pub(crate) fn show_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+    MAIN_GENERATION.fetch_add(1, Ordering::SeqCst);
+    let window = match app.get_webview_window(MAIN) {
+        Some(w) => w,
+        None => match create_main(app) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!("can't open the window: {e}");
+                return;
+            }
+        },
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+fn create_main(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == MAIN)
+        .ok_or_else(|| tauri::Error::WindowNotFound)?;
+    let window = WebviewWindowBuilder::from_config(app, config)?.build()?;
+    // Windows: the app's header is the title bar (its own minimize,
+    // maximize and close), so the system frame goes before the window is
+    // first shown. Windows 11 keeps the rounded corners, shadow and
+    // resize edges of an undecorated window.
+    #[cfg(windows)]
+    let _ = window.set_decorations(false);
+    Ok(window)
+}
+
+/// Close the hidden main window now, unless it is in use: visible, or
+/// showing an edit being rendered.
+fn free_main(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN) else {
+        return;
+    };
+    if window.is_visible().unwrap_or(true)
+        || app.state::<AppState>().rendering.load(Ordering::Relaxed)
+    {
+        return;
     }
+    tracing::info!("closing the hidden window to free its memory");
+    let _ = window.destroy();
+}
+
+/// [`free_main`] once the window has stayed hidden for [`FREE_MAIN_AFTER`].
+fn free_main_later(app: &AppHandle) {
+    let generation = MAIN_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(FREE_MAIN_AFTER).await;
+        if MAIN_GENERATION.load(Ordering::SeqCst) == generation {
+            free_main(&app);
+        }
+    });
 }
 
 /// What was saved, for its notification, sound and popup.
@@ -992,14 +1061,6 @@ pub fn run() {
                 });
             }
             check_default_clips_dir(app.handle());
-            // Windows: the app's header is the title bar (its own minimize,
-            // maximize and close), so the system frame goes before the
-            // window is first shown. Windows 11 keeps the rounded corners,
-            // shadow and resize edges of an undecorated window.
-            #[cfg(windows)]
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_decorations(false);
-            }
             allow_clips_dir(app.handle(), &app.state::<AppState>().clips_dir());
             allow_steam_art(app.handle());
             watch_clips_dir(app.handle(), &app.state::<AppState>().clips_dir());
@@ -1045,6 +1106,8 @@ pub fn run() {
             {
                 let handle = app.handle().clone();
                 app.listen_any(service::RECORDING_STARTED, move |event| {
+                    // A game is on: a window left in the tray goes now.
+                    free_main(&handle);
                     if !overlay::enabled(&handle) {
                         return;
                     }
@@ -1097,9 +1160,23 @@ pub fn run() {
                     // Keep recording in the tray.
                     api.prevent_close();
                     let _ = window.hide();
+                    free_main_later(window.app_handle());
                 } else {
                     window.app_handle().exit(0);
                 }
+            }
+            // The page is gone without its clean-up having run: close
+            // the audio meters it may have left open.
+            if let WindowEvent::Destroyed = event
+                && window.label() == MAIN
+            {
+                let app = window.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let meter = app.state::<AppState>().meter.lock().await.take();
+                    if let Some(m) = meter {
+                        let _ = tauri::async_runtime::spawn_blocking(move || drop(m)).await;
+                    }
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1138,6 +1215,16 @@ pub fn run() {
             stop_audio_meters,
             copy_clip,
         ])
-        .run(context)
-        .expect("error while running Reruns");
+        .build(context)
+        .expect("error while running Reruns")
+        .run(|_, event| {
+            // With no window left (closed to free memory, or never made
+            // for a launch into the tray) Tauri would quit; Reruns lives
+            // in the tray. An explicit exit carries a code and goes ahead.
+            if let RunEvent::ExitRequested { api, code, .. } = event
+                && code.is_none()
+            {
+                api.prevent_exit();
+            }
+        });
 }

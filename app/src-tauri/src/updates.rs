@@ -206,7 +206,14 @@ pub fn update_support(app: AppHandle) -> UpdateSupport {
 /// The update the timed checks found, if any.
 #[tauri::command]
 pub fn found_update(found: State<Found>) -> Option<UpdateInfo> {
-    found.0.lock().unwrap().clone()
+    let mut found = found.0.lock().unwrap();
+    let info = found.clone();
+    // Asked about once per launch: the window is rebuilt after a while
+    // in the tray, and its page asks again each time.
+    if let Some(f) = found.as_mut() {
+        f.prompt = false;
+    }
+    info
 }
 
 /// Look for a newer release now.
