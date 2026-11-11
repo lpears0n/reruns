@@ -120,9 +120,9 @@ function mockBridge(data) {
       if (cmd === 'render_clip') { window.__lastRender = args; return args.path }
       if (cmd === 'copy_clip') { window.__copied = args.path; return null }
       if (cmd === 'set_settings') { data.get_settings = args.settings; return null }
-      if (cmd === 'list_games') {
+      if (cmd === 'list_library') {
         const ignored = data.get_settings.ignored_games.map((i) => i.name.toLowerCase())
-        return data.list_games.filter((g) => !ignored.includes(g.name.toLowerCase()))
+        return { clips: data.list_clips, games: data.list_games.filter((g) => !ignored.includes(g.name.toLowerCase())) }
       }
       if (cmd === 'delete_clip') { data.list_clips = data.list_clips.filter((c) => c.path !== args.path); return null }
       if (cmd === 'plugin:event|listen') {
@@ -503,6 +503,11 @@ async function runScenario(scenario, browser) {
     { version: '1.2.0', current_version: '1.1.0', notes: null, prompt: true },
   )
   await page.getByRole('dialog', { name: 'Reruns 1.2.0' }).waitFor()
+  assert.equal(
+    await page.evaluate(() => window.__calls.filter((c) => c === 'found_update').length),
+    2,
+    'a prompt shown from the event is marked as shown',
+  )
   await shot('update-prompt')
   await page.getByRole('button', { name: 'Later' }).click()
   assert.equal(await page.getByRole('dialog', { name: 'Reruns 1.2.0' }).count(), 0, 'Later closes the prompt')
@@ -583,7 +588,7 @@ async function startupUpdateScenario(browser) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' })
   page.on('pageerror', (e) => { throw new Error(`page error in startup update: ${e.message}`) })
   const data = fixtures('full')
-  data.found_update = { version: '1.2.0', current_version: '1.1.0', notes: null, prompt: true }
+  data.found_update = { version: '1.2.0', current_version: '1.1.0', notes: 'Smoother clips.\n\n## Everyone\n\n- **No more freezes:** clips keep to 60 frames a second.\n- Updates wait for your game to close.', prompt: true }
   await page.addInitScript(mockBridge, data)
   await page.goto(`http://localhost:${PORT}/`)
   await page.getByRole('dialog', { name: 'Reruns 1.2.0' }).waitFor()
@@ -592,8 +597,21 @@ async function startupUpdateScenario(browser) {
     calls.indexOf('listen update-available') < calls.indexOf('found_update'),
     'asks for the found update only once listening for it',
   )
+  // The release's notes, with their bold and bullets, not as raw Markdown.
+  const dialog = page.getByRole('dialog', { name: 'Reruns 1.2.0' })
+  await dialog.getByText('No more freezes:').waitFor()
+  assert.ok(!(await dialog.innerText()).includes('**'), 'notes are shown formatted')
+  await page.screenshot({ path: path.join(out, 'update-prompt.png') })
   await page.getByRole('button', { name: 'Later' }).click()
-  assert.equal(await page.locator('header').getByRole('button', { name: 'Update to 1.2.0' }).count(), 1, 'top bar shows the update')
+  const icon = page.locator('header').getByRole('button', { name: 'Update to 1.2.0' })
+  assert.equal(await icon.count(), 1, 'top bar shows the update')
+  // Skipping a version stops the prompt at the next start, not the icon.
+  await icon.click()
+  await page.getByRole('button', { name: 'Skip this version' }).click()
+  await page.reload()
+  await icon.waitFor()
+  await page.waitForTimeout(300)
+  assert.equal(await page.getByRole('dialog').count(), 0, 'a skipped version is not prompted again')
   await page.close()
 }
 

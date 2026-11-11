@@ -38,7 +38,7 @@
   import StateMessage from './lib/StateMessage.svelte'
   import StatusBar from './lib/StatusBar.svelte'
   import Toast, { type ToastData } from './lib/Toast.svelte'
-  import UpdatePrompt from './lib/UpdatePrompt.svelte'
+  import UpdatePrompt, { skippedUpdate } from './lib/UpdatePrompt.svelte'
   import WindowControls from './lib/WindowControls.svelte'
 
   type View = 'games' | 'game' | 'clips' | 'settings'
@@ -61,7 +61,8 @@
   let updatePrompt = $state(false)
   function announceUpdate(u: UpdateInfo) {
     newRelease = u
-    if (u.prompt) updatePrompt = true
+    // A version the user chose to skip still shows the header icon.
+    if (u.prompt && skippedUpdate() !== u.version) updatePrompt = true
   }
   let usage = $state<Usage | null>(null)
   let caps = $state<Capabilities | null>(null)
@@ -147,8 +148,9 @@
 
   async function loadLibrary() {
     try {
-      allClips = await api.clips()
-      games = await api.games()
+      const library = await api.library()
+      allClips = library.clips
+      games = library.games
       retryFailedArt()
       libraryError = null
       writeLibraryCache(allClips, games)
@@ -300,7 +302,7 @@
     const ignoredChanged = JSON.stringify(s.ignored_games) !== JSON.stringify(settings?.ignored_games)
     settings = s
     if (dirChanged) refreshLibrary()
-    else if (ignoredChanged) api.games().then((g) => (games = g), () => {})
+    else if (ignoredChanged) refreshLibrary()
     refreshUsage()
   }
 
@@ -368,8 +370,9 @@
     loadLibrary()
     refreshUsage()
     api.settings().then((s) => (settings = s))
-    // Probing encoders takes a moment; settings fill in when it's done.
-    api.capabilities().then((c) => (caps = c))
+    // Encoders are probed when Settings opens (the effect above), not
+    // here: a launch into the tray would test-encode with every encoder
+    // for nothing, maybe while a game is running.
     // Everything else arrives as events. Coming back to the window is the one
     // moment worth re-checking, in case an event was missed while hidden.
     const onFocus = () => {
@@ -381,19 +384,29 @@
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onFocus)
     const tick = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
       const recording = status?.state === 'recording'
       if (recording || Date.now() - now >= 60_000) now = Date.now()
     }, 1000)
-    const updates = onUpdateAvailable(announceUpdate)
+    const updates = onUpdateAvailable((u) => {
+      announceUpdate(u)
+      // Asking marks the prompt as shown, or a window rebuilt after the
+      // tray would ask again after "Later".
+      if (u.prompt) api.foundUpdate()
+    })
     // The first check runs as the app starts, maybe before this page
     // listened: once listening, ask what it found.
     updates.then(() => api.foundUpdate()).then((u) => u && announceUpdate(u))
+    api.updatedTo().then((v) => v && notify(`Updated to ${v}`))
     const unlisten = [
       updates,
       onStatusChanged((s) => {
         status = s
         // A game started or stopped: "playing now" and play time changed.
-        refreshLibrary()
+        // Not while the window is hidden in the tray: that would list the
+        // whole library twice per change during a game, for nobody.
+        // Coming back to the window refreshes (onFocus above).
+        if (document.visibilityState === 'visible') refreshLibrary()
       }),
       onClipSaved((path) => {
         notify(`Saved ${path.split(/[\\/]/).pop()}`)

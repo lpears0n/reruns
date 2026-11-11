@@ -30,7 +30,7 @@ use serde::Serialize;
 use service::{Service, Status};
 use settings::Settings;
 use tauri::{
-    AppHandle, Emitter, Listener, Manager, State, WindowEvent,
+    AppHandle, Emitter, Listener, Manager, RunEvent, State, WebviewWindowBuilder, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -46,6 +46,8 @@ pub(crate) struct AppState {
     media: media_server::MediaServer,
     /// Set by `cancel_render` to stop the render in progress (one at a time).
     render_cancel: Arc<AtomicBool>,
+    /// An edit is being rendered: an update must not restart the app now.
+    pub(crate) rendering: Arc<AtomicBool>,
     thumbs: thumbs::Thumbnailer,
     /// Folder watcher for the current clips folder; replaced when it changes.
     watcher: Mutex<Option<watcher::Handle>>,
@@ -247,31 +249,42 @@ async fn hotkey_backend(state: State<'_, AppState>) -> CmdResult<Option<hotkeys:
     Ok(state.hotkeys.backend().await)
 }
 
-/// Recently played games with clips, sessions and Steam art.
+#[derive(Serialize)]
+struct Library {
+    clips: Vec<library::Clip>,
+    /// Recently played games with clips, sessions and Steam art.
+    games: Vec<games::GameEntry>,
+}
+
+/// Every clip and the games they belong to, from one pass over the
+/// clips folder (the page used to ask for each list separately, and each
+/// read every clip's file and sidecar).
 #[tauri::command]
-async fn list_games(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> CmdResult<Vec<games::GameEntry>> {
+async fn list_library(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Library> {
     let status = state.service.status().await.ok();
     let dir = state.clips_dir();
     let ignored = state.settings.lock().unwrap().ignored_games.clone();
-    let list = tauri::async_runtime::spawn_blocking(move || {
+    let library = tauri::async_runtime::spawn_blocking(move || {
         let clips = library::list(&dir);
         let playing = status
             .as_ref()
             .and_then(|s| Some((s.game.clone()?, s.steam_app_id, s.session_start_ms?)));
-        games::list(
+        let games = games::list(
             &clips,
             playing.as_ref().map(|(n, id, t)| (n.as_str(), *id, *t)),
             &ignored,
-        )
+        );
+        Library { clips, games }
     })
     .await
     .map_err(err)?;
+    // Images are made in the background; each arrives as a thumbnail-ready event.
+    for c in library.clips.iter().filter(|c| !library::is_cached(c)) {
+        state.thumbs.request(c.path.clone(), c.game.clone());
+    }
     // Again here in case Steam was installed after start-up.
     allow_steam_art(&app);
-    Ok(list)
+    Ok(library)
 }
 
 /// Base URL for `<video>` sources; append the percent-encoded file path.
@@ -404,19 +417,6 @@ fn preview_sound(sound: settings::Sound, volume: u32) {
 #[tauri::command]
 async fn save_screenshot(app: AppHandle, state: State<'_, AppState>) -> CmdResult<PathBuf> {
     state.service.screenshot(save_dir(&app)).await
-}
-
-#[tauri::command]
-async fn list_clips(state: State<'_, AppState>) -> CmdResult<Vec<library::Clip>> {
-    let dir = state.clips_dir();
-    let clips = tauri::async_runtime::spawn_blocking(move || library::list(&dir))
-        .await
-        .map_err(err)?;
-    // Images are made in the background; each arrives as a thumbnail-ready event.
-    for c in clips.iter().filter(|c| !library::is_cached(c)) {
-        state.thumbs.request(c.path.clone(), c.game.clone());
-    }
-    Ok(clips)
 }
 
 #[tauri::command]
@@ -643,15 +643,27 @@ async fn render_clip(
         })),
         cancel: Some(cancel),
     };
-    tauri::async_runtime::spawn_blocking(move || {
+    let rendering = state.rendering.clone();
+    rendering.store(true, Ordering::Relaxed);
+    let rendered = tauri::async_runtime::spawn_blocking(move || {
         clip_core::export::render_with(&path, &out, &edit, encoder, &cfg, control)
     })
-    .await
-    .map_err(err)?
-    .map_err(|e| format!("{e:#}"))?;
-    library::copy_meta(&source, &result, start, end);
-    let _ = app.emit(service::CLIP_SAVED, &result);
-    Ok(result)
+    .await;
+    rendering.store(false, Ordering::Relaxed);
+    let done = rendered
+        .map_err(err)
+        .and_then(|r| r.map_err(|e| format!("{e:#}")))
+        .map(|()| {
+            library::copy_meta(&source, &result, start, end);
+            let _ = app.emit(service::CLIP_SAVED, &result);
+            result
+        });
+    // A window hidden in the tray was kept for this render: free it once
+    // its page has had the result.
+    free_main_later(&app);
+    // An update that was waiting for this render (however it ended).
+    tauri::async_runtime::spawn(updates::install_waiting(app.clone()));
+    done
 }
 
 /// How a clip of `seconds` would be fitted under `max_mb`, for the export
@@ -706,12 +718,81 @@ fn allow_steam_art(app: &AppHandle) {
     }
 }
 
+const MAIN: &str = "main";
+
+/// Hidden in the tray this long, the window is closed for real: its
+/// webview is the app's largest piece of memory (100–250 MB) and all of
+/// it is idle while a game is played. Opening it again builds a new one,
+/// which paints from the cached library.
+const FREE_MAIN_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Bumped whenever the window is shown or hidden, so a pending
+/// [`free_main_later`] only acts if nothing happened since.
+static MAIN_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Show the main window, building it first if there is none (a launch
+/// into the tray makes none, and one left hidden is closed after a
+/// while).
 pub(crate) fn show_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+    MAIN_GENERATION.fetch_add(1, Ordering::SeqCst);
+    let window = match app.get_webview_window(MAIN) {
+        Some(w) => w,
+        None => match create_main(app) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!("can't open the window: {e}");
+                return;
+            }
+        },
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+fn create_main(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == MAIN)
+        .ok_or_else(|| tauri::Error::WindowNotFound)?;
+    let window = WebviewWindowBuilder::from_config(app, config)?.build()?;
+    // Windows: the app's header is the title bar (its own minimize,
+    // maximize and close), so the system frame goes before the window is
+    // first shown. Windows 11 keeps the rounded corners, shadow and
+    // resize edges of an undecorated window.
+    #[cfg(windows)]
+    let _ = window.set_decorations(false);
+    Ok(window)
+}
+
+/// Close the hidden main window now, unless it is in use: visible, or
+/// showing an edit being rendered.
+fn free_main(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN) else {
+        return;
+    };
+    if window.is_visible().unwrap_or(true)
+        || app.state::<AppState>().rendering.load(Ordering::Relaxed)
+    {
+        return;
     }
+    tracing::info!("closing the hidden window to free its memory");
+    let _ = window.destroy();
+}
+
+/// [`free_main`] once the window has stayed hidden for [`FREE_MAIN_AFTER`].
+fn free_main_later(app: &AppHandle) {
+    let generation = MAIN_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(FREE_MAIN_AFTER).await;
+        if MAIN_GENERATION.load(Ordering::SeqCst) == generation {
+            free_main(&app);
+        }
+    });
 }
 
 /// What was saved, for its notification, sound and popup.
@@ -844,7 +925,42 @@ fn point_gstreamer_at_bundled_plugins() {
             // version must not be mixed in.
             std::env::set_var("GST_PLUGIN_SYSTEM_PATH", &plugins);
         }
+        // The plugin list GStreamer caches, in a file of this version's
+        // own. Its default is one file per user shared by every GStreamer
+        // on the PC (another install rewrites it for its own plugins, and
+        // each then rescans at its next start) in a folder disk clean-up
+        // empties.
+        if std::env::var_os("GST_REGISTRY").is_none()
+            && let Some(dir) = dirs::data_local_dir().map(|d| d.join("gg.reruns.app"))
+        {
+            let name = registry_file_name(env!("CARGO_PKG_VERSION"));
+            let _ = std::fs::create_dir_all(&dir);
+            // Earlier versions' lists are no use to anyone.
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let file = entry.file_name();
+                    let file = file.to_string_lossy();
+                    if is_registry_file(&file) && *file != name {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+            // SAFETY: as above.
+            unsafe {
+                std::env::set_var("GST_REGISTRY", dir.join(name));
+            }
+        }
     }
+}
+
+#[cfg(windows)]
+fn registry_file_name(version: &str) -> String {
+    format!("gst-registry-{version}.bin")
+}
+
+#[cfg(windows)]
+fn is_registry_file(name: &str) -> bool {
+    name.starts_with("gst-registry-") && name.ends_with(".bin")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -926,6 +1042,7 @@ pub fn run() {
                 encoders: tokio::sync::OnceCell::new(),
                 media,
                 render_cancel: Arc::default(),
+                rendering: Arc::default(),
                 thumbs: thumbs::Thumbnailer::start(app.handle().clone()),
                 watcher: Mutex::new(None),
                 meter: tokio::sync::Mutex::new(None),
@@ -952,14 +1069,6 @@ pub fn run() {
                 });
             }
             check_default_clips_dir(app.handle());
-            // Windows: the app's header is the title bar (its own minimize,
-            // maximize and close), so the system frame goes before the
-            // window is first shown. Windows 11 keeps the rounded corners,
-            // shadow and resize edges of an undecorated window.
-            #[cfg(windows)]
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_decorations(false);
-            }
             allow_clips_dir(app.handle(), &app.state::<AppState>().clips_dir());
             allow_steam_art(app.handle());
             watch_clips_dir(app.handle(), &app.state::<AppState>().clips_dir());
@@ -1005,6 +1114,13 @@ pub fn run() {
             {
                 let handle = app.handle().clone();
                 app.listen_any(service::RECORDING_STARTED, move |event| {
+                    // A game is on: a window left in the tray goes, once
+                    // any delete it holds for Undo has had its few seconds.
+                    let app = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                        free_main(&app);
+                    });
                     if !overlay::enabled(&handle) {
                         return;
                     }
@@ -1019,13 +1135,15 @@ pub fn run() {
                     overlay::show(&handle, overlay::Popup::ready(&game, &hotkey));
                 });
             }
-            if let Err(e) = overlay::create(app.handle()) {
-                tracing::warn!("in-game overlay unavailable: {e}");
-            }
+            overlay::init(app.handle());
             // The window starts hidden (tauri.conf.json) so a login launch
             // can stay in the tray without flashing.
             let autostarted = std::env::args().any(|a| a == system::AUTOSTART_ARG);
+            // After "Update and restart" the window comes back, even from
+            // a copy that was started at login.
+            let updated = updates::take_marker(app.handle());
             let in_tray = autostarted
+                && !updated
                 && app
                     .state::<AppState>()
                     .settings
@@ -1055,9 +1173,23 @@ pub fn run() {
                     // Keep recording in the tray.
                     api.prevent_close();
                     let _ = window.hide();
+                    free_main_later(window.app_handle());
                 } else {
                     window.app_handle().exit(0);
                 }
+            }
+            // The page is gone without its clean-up having run: close
+            // the audio meters it may have left open.
+            if let WindowEvent::Destroyed = event
+                && window.label() == MAIN
+            {
+                let app = window.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let meter = app.state::<AppState>().meter.lock().await.take();
+                    if let Some(m) = meter {
+                        let _ = tauri::async_runtime::spawn_blocking(move || drop(m)).await;
+                    }
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1071,13 +1203,14 @@ pub fn run() {
             updates::found_update,
             updates::check_update,
             updates::install_update,
+            updates::cancel_update,
+            updates::updated_to,
             ignore_current_game,
-            list_clips,
+            list_library,
             delete_clip,
             update_clip,
             get_storage,
             get_capabilities,
-            list_games,
             choose_screen,
             hotkey_backend,
             media_base,
@@ -1094,6 +1227,16 @@ pub fn run() {
             stop_audio_meters,
             copy_clip,
         ])
-        .run(context)
-        .expect("error while running Reruns");
+        .build(context)
+        .expect("error while running Reruns")
+        .run(|_, event| {
+            // With no window left (closed to free memory, or never made
+            // for a launch into the tray) Tauri would quit; Reruns lives
+            // in the tray. An explicit exit carries a code and goes ahead.
+            if let RunEvent::ExitRequested { api, code, .. } = event
+                && code.is_none()
+            {
+                api.prevent_exit();
+            }
+        });
 }

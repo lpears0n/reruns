@@ -212,24 +212,26 @@ fn percent_decode(s: &str) -> String {
 
 fn random_token() -> String {
     let mut bytes = [0u8; 16];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))
-        .is_err()
-    {
-        // Fall back to time + address entropy; still unguessable enough for
-        // a loopback server that only serves allowed paths.
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        bytes[..16].copy_from_slice(&t.to_le_bytes());
-    }
+    // The system's random source on every platform. This read
+    // /dev/urandom before, which Windows doesn't have, so the token
+    // there was only the time in nanoseconds: guessable.
+    getrandom::fill(&mut bytes).expect("the system has a random source");
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tokens_are_random() {
+        let (a, b) = (random_token(), random_token());
+        assert_eq!(a.len(), 32);
+        assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+        // Not the clock: tokens made together share no long prefix.
+        assert_ne!(a[..16], b[..16]);
+    }
 
     #[test]
     fn ranges() {

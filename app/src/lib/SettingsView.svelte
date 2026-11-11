@@ -171,8 +171,9 @@
     installing = null
     const stop = await onUpdateProgress((f) => (installing = f))
     try {
-      // Restarts into the new version; only a failure comes back.
-      await api.installUpdate()
+      // Restarts into the new version, or waits for the game to close.
+      const game = await api.installUpdate()
+      if (game) updateError = `Downloaded. Installs when ${game} closes.`
     } catch (e) {
       updateError = String(e)
     } finally {
