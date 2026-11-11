@@ -56,7 +56,7 @@ impl Cue {
 
 /// Play `sound` (for `Builtin`, the built-in sound of `cue`) at
 /// `volume_percent` without blocking. A custom file that has gone missing
-/// falls back to the built-in sound.
+/// or won't play falls back to the built-in sound.
 ///
 /// Plain 16-bit WAVs (every built-in sound, and such files of the user's)
 /// go straight to the system's player from memory, which starts at once.
@@ -83,6 +83,7 @@ pub fn play_sound(sound: &Sound, cue: Cue, volume_percent: u32) {
         {
             return;
         }
+        let was_custom = custom.is_some();
         let path = custom.or_else(|| builtin_sound_file(cue));
         let result = match &path {
             Some(p) => clip_core::sound::play_blocking(p, volume_percent, None),
@@ -90,6 +91,11 @@ pub fn play_sound(sound: &Sound, cue: Cue, volume_percent: u32) {
         };
         if let Err(e) = result {
             tracing::warn!("sound: {e:#}");
+            // A custom file that won't play (damaged, or a format this
+            // GStreamer can't read) still gets the built-in sound.
+            if was_custom && let Some(wav) = scaled_pcm16(cue.builtin(), volume_percent) {
+                imp::play_wav(wav);
+            }
         }
     });
 }
