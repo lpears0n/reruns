@@ -806,12 +806,44 @@ behaves changed.
 - **Hidden window does less:** a status change no longer re-lists the
   library, and the 1 s clock tick is skipped, while
   `document.visibilityState` isn't `visible`; coming back refreshes.
-- **Still to do:** free the main webview while hidden (destroy and
-  rebuild, or WebView2 `TrySuspend`); no main webview at all for a
-  tray launch; one `list_library` command; prune the bundled DLLs to
-  what the plugins load; pin and cache the GStreamer MSI in the release
-  workflow; release notes and "Skip this version" in the prompt;
-  screenshot converts only the last frame.
+- **Window memory freed in the tray:** the main window has
+  `"create": false`; `show_main` builds it (`create_main`, from the
+  config entry, decorations off on Windows). Closed to the tray it is
+  hidden, then destroyed after 60 s (`free_main_later`) or as soon as a
+  game starts recording (`free_main`), unless an edit is rendering.
+  With no window Tauri asks to exit; `RunEvent::ExitRequested` without
+  a code is refused. On `Destroyed` the audio meters are closed (the
+  page's clean-up never ran), and `found_update` hands out the start-up
+  prompt once per launch. Measured on the owner's PC with the release
+  build: tray launch 38 MB and no webview (was ~420 MB); window open
+  422 MB; closed to the tray 416 MB, and 51 MB after the minute;
+  reopening builds a new window (second launch → "showed its window").
+  Lost with the window: an unfinished trim, and which page was open.
+- **`list_library`** replaces `list_clips` + `list_games` (each scanned
+  the whole folder); the page makes one call.
+- **Update prompt:** shows the release's notes (`app/src/lib/notes.ts`
+  turns the Markdown's headings, bullets and bold into elements, links
+  into their text; never HTML) and "Skip this version"
+  (`localStorage` `reruns/skip-update`: no prompt for that version at
+  later starts, the header icon stays). UI test covers both; the
+  dialog is `w-md` so three buttons fit.
+- **Smaller Windows bundle:** `scripts/collect-gstreamer.ps1` now copies
+  only the libraries something bundled loads: it reads each plugin's PE
+  import tables (delay-loaded too), follows them through `bin/`, and
+  adds the libraries the app links plus `gstd3d11`. Against the local
+  1.28.8 install: 45 of 146 libraries, 41 MB of 174 MB before
+  compression. The script's element check now runs `gst-inspect` from a
+  folder holding only the bundled libraries, with GStreamer's `bin/` off
+  the PATH. Also run against that bundle alone here: the encoder tests
+  (NVENC, AMF, MF, x264), `tests/save.rs`, decoding a clip, and the app
+  starting. `-All` copies everything as before. Not yet seen: the
+  installer's new size from the release workflow (1.26.9), and AMD or
+  Intel-only PCs.
+- **GStreamer pinned to 1.26.9** in `ci.yml` and `release.yml` (it was
+  whatever Chocolatey had; 1.26.9 is its newest today).
+- **Left from W2:** the screenshot path converts every frame of the GOP
+  (keep the last decoded frame, convert once); encoder probe results
+  cached on disk by driver version; start-up phase timings in the log.
 
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
