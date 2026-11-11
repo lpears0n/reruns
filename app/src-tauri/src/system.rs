@@ -28,9 +28,9 @@ pub enum Cue {
 
 /// The built-in sounds, made by `scripts/make-sounds.mjs`: mono 16-bit PCM
 /// WAV at 48 kHz, embedded so both platforms have them with nothing to
-/// install. A two-note chime for clips (0.27 s), a small shutter for
-/// screenshots (0.15 s), and the chime turned downwards for a failed save
-/// (0.3 s); all quiet enough to sit under a game.
+/// install. A two-note chime for clips (0.41 s), a small shutter for
+/// screenshots (0.23 s), and the chime turned downwards for a failed save
+/// (0.44 s), each with a short echo; all quiet enough to sit under a game.
 const SAVE_SOUND: &[u8] = include_bytes!("../sounds/clip-saved.wav");
 const SCREENSHOT_SOUND: &[u8] = include_bytes!("../sounds/screenshot.wav");
 const FAILED_SOUND: &[u8] = include_bytes!("../sounds/save-failed.wav");
@@ -366,7 +366,7 @@ mod tests {
             assert_eq!(riff_len + 8, wav.len());
             let samples = samples(wav);
             let seconds = samples.len() as f64 / f64::from(rate);
-            assert!((0.1..=0.35).contains(&seconds), "{cue:?}: {seconds} s");
+            assert!((0.1..=0.5).contains(&seconds), "{cue:?}: {seconds} s");
             let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap();
             // Between -16 and -7 dBFS.
             assert!((5_190..=14_640).contains(&peak), "{cue:?}: peak {peak}");

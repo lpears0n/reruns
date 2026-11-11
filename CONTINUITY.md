@@ -857,6 +857,14 @@ behaves changed.
   `save-failed.wav` (the chime downwards an octave lower, 300 ms).
   Tune by editing the numbers and running it again; the owner hasn't
   heard them yet.
+- **Echo added at the owner's request (same day):** `echo()` in the
+  script adds a few duller, quieter copies after each sound, on top of
+  the sound at its old level (the peak is set before the echo). Lengths
+  are now 413 / 233 / 443 ms. On the chimes the delays are multiples of
+  6.81 ms, a whole number of periods of every note used, so each
+  reflection adds to its note: the first try at 47 ms arrived out of
+  step and made the chime quieter (a comb filter). Chime over its first
+  270 ms: -22.8 dB mean, from -24.9.
 - **Screenshots have their own default** (`system::Cue`): with
   `screenshot_sound` unset they play the shutter, unless the clip sound
   is a file of the user's, which they still follow. Settings shows
