@@ -650,10 +650,17 @@ async fn render_clip(
     })
     .await;
     rendering.store(false, Ordering::Relaxed);
-    rendered.map_err(err)?.map_err(|e| format!("{e:#}"))?;
-    library::copy_meta(&source, &result, start, end);
-    let _ = app.emit(service::CLIP_SAVED, &result);
-    Ok(result)
+    let done = rendered
+        .map_err(err)
+        .and_then(|r| r.map_err(|e| format!("{e:#}")))
+        .map(|()| {
+            library::copy_meta(&source, &result, start, end);
+            let _ = app.emit(service::CLIP_SAVED, &result);
+            result
+        });
+    // An update that was waiting for this render (however it ended).
+    tauri::async_runtime::spawn(updates::install_waiting(app.clone()));
+    done
 }
 
 /// How a clip of `seconds` would be fitted under `max_mb`, for the export
@@ -1104,8 +1111,13 @@ pub fn run() {
             {
                 let handle = app.handle().clone();
                 app.listen_any(service::RECORDING_STARTED, move |event| {
-                    // A game is on: a window left in the tray goes now.
-                    free_main(&handle);
+                    // A game is on: a window left in the tray goes, once
+                    // any delete it holds for Undo has had its few seconds.
+                    let app = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                        free_main(&app);
+                    });
                     if !overlay::enabled(&handle) {
                         return;
                     }
