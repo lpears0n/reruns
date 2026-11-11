@@ -189,8 +189,8 @@ export const api = {
   save: () => invoke<string>('save_clip'),
   screenshot: () => invoke<string>('save_screenshot'),
   ignoreCurrentGame: () => invoke<Settings>('ignore_current_game'),
-  clips: () => invoke<Clip[]>('list_clips'),
-  games: () => invoke<GameEntry[]>('list_games'),
+  /** Every clip and the games they belong to, from one scan. */
+  library: () => invoke<{ clips: Clip[]; games: GameEntry[] }>('list_library'),
   deleteClip: (path: string) => invoke<void>('delete_clip', { path }),
   updateClip: (path: string, patch: ClipPatch) => invoke<Clip>('update_clip', { path, patch }),
   reveal: (path: string) => invoke<void>('reveal_clip', { path }),

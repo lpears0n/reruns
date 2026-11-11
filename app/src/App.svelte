@@ -38,7 +38,7 @@
   import StateMessage from './lib/StateMessage.svelte'
   import StatusBar from './lib/StatusBar.svelte'
   import Toast, { type ToastData } from './lib/Toast.svelte'
-  import UpdatePrompt from './lib/UpdatePrompt.svelte'
+  import UpdatePrompt, { skippedUpdate } from './lib/UpdatePrompt.svelte'
   import WindowControls from './lib/WindowControls.svelte'
 
   type View = 'games' | 'game' | 'clips' | 'settings'
@@ -61,7 +61,8 @@
   let updatePrompt = $state(false)
   function announceUpdate(u: UpdateInfo) {
     newRelease = u
-    if (u.prompt) updatePrompt = true
+    // A version the user chose to skip still shows the header icon.
+    if (u.prompt && skippedUpdate() !== u.version) updatePrompt = true
   }
   let usage = $state<Usage | null>(null)
   let caps = $state<Capabilities | null>(null)
@@ -147,8 +148,9 @@
 
   async function loadLibrary() {
     try {
-      allClips = await api.clips()
-      games = await api.games()
+      const library = await api.library()
+      allClips = library.clips
+      games = library.games
       retryFailedArt()
       libraryError = null
       writeLibraryCache(allClips, games)
@@ -300,7 +302,7 @@
     const ignoredChanged = JSON.stringify(s.ignored_games) !== JSON.stringify(settings?.ignored_games)
     settings = s
     if (dirChanged) refreshLibrary()
-    else if (ignoredChanged) api.games().then((g) => (games = g), () => {})
+    else if (ignoredChanged) refreshLibrary()
     refreshUsage()
   }
 

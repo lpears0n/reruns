@@ -249,31 +249,42 @@ async fn hotkey_backend(state: State<'_, AppState>) -> CmdResult<Option<hotkeys:
     Ok(state.hotkeys.backend().await)
 }
 
-/// Recently played games with clips, sessions and Steam art.
+#[derive(Serialize)]
+struct Library {
+    clips: Vec<library::Clip>,
+    /// Recently played games with clips, sessions and Steam art.
+    games: Vec<games::GameEntry>,
+}
+
+/// Every clip and the games they belong to, from one pass over the
+/// clips folder (the page used to ask for each list separately, and each
+/// read every clip's file and sidecar).
 #[tauri::command]
-async fn list_games(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> CmdResult<Vec<games::GameEntry>> {
+async fn list_library(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Library> {
     let status = state.service.status().await.ok();
     let dir = state.clips_dir();
     let ignored = state.settings.lock().unwrap().ignored_games.clone();
-    let list = tauri::async_runtime::spawn_blocking(move || {
+    let library = tauri::async_runtime::spawn_blocking(move || {
         let clips = library::list(&dir);
         let playing = status
             .as_ref()
             .and_then(|s| Some((s.game.clone()?, s.steam_app_id, s.session_start_ms?)));
-        games::list(
+        let games = games::list(
             &clips,
             playing.as_ref().map(|(n, id, t)| (n.as_str(), *id, *t)),
             &ignored,
-        )
+        );
+        Library { clips, games }
     })
     .await
     .map_err(err)?;
+    // Images are made in the background; each arrives as a thumbnail-ready event.
+    for c in library.clips.iter().filter(|c| !library::is_cached(c)) {
+        state.thumbs.request(c.path.clone(), c.game.clone());
+    }
     // Again here in case Steam was installed after start-up.
     allow_steam_art(&app);
-    Ok(list)
+    Ok(library)
 }
 
 /// Base URL for `<video>` sources; append the percent-encoded file path.
@@ -406,19 +417,6 @@ fn preview_sound(sound: settings::Sound, volume: u32) {
 #[tauri::command]
 async fn save_screenshot(app: AppHandle, state: State<'_, AppState>) -> CmdResult<PathBuf> {
     state.service.screenshot(save_dir(&app)).await
-}
-
-#[tauri::command]
-async fn list_clips(state: State<'_, AppState>) -> CmdResult<Vec<library::Clip>> {
-    let dir = state.clips_dir();
-    let clips = tauri::async_runtime::spawn_blocking(move || library::list(&dir))
-        .await
-        .map_err(err)?;
-    // Images are made in the background; each arrives as a thumbnail-ready event.
-    for c in clips.iter().filter(|c| !library::is_cached(c)) {
-        state.thumbs.request(c.path.clone(), c.game.clone());
-    }
-    Ok(clips)
 }
 
 #[tauri::command]
@@ -1193,12 +1191,11 @@ pub fn run() {
             updates::cancel_update,
             updates::updated_to,
             ignore_current_game,
-            list_clips,
+            list_library,
             delete_clip,
             update_clip,
             get_storage,
             get_capabilities,
-            list_games,
             choose_screen,
             hotkey_backend,
             media_base,
