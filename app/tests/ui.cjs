@@ -466,15 +466,20 @@ async function runScenario(scenario, browser) {
   await page.getByText("Can't open: device not found").waitFor()
   await page.waitForTimeout(150)
   await shot('settings-audio')
-  // Save sounds: pick a file for clips; screenshots follow it.
+  // Save sounds: a chime for clips and a shutter for screenshots; pick a
+  // file for clips and screenshots follow it.
   await page.getByRole('button', { name: 'General' }).click()
+  assert.ok(await page.getByText('Built-in chime').isVisible(), 'clips start on the chime')
+  assert.ok(await page.getByText('Built-in shutter').isVisible(), 'screenshots start on the shutter')
   await page.getByRole('button', { name: 'Play the clip sound' }).click()
+  await page.getByRole('button', { name: 'Play the screenshot sound' }).click()
   await page.getByRole('button', { name: 'Choose file…' }).first().click()
   await page.getByText('airhorn.mp3').first().waitFor()
   assert.equal(await page.getByRole('button', { name: 'Use default' }).count(), 1, 'a custom sound can be reset')
   assert.ok(await page.getByText('Same as clips').isVisible(), 'screenshots use the clip sound')
   const previews = await page.evaluate(() => window.__previews)
-  assert.deepEqual(previews[0], { sound: { kind: 'builtin' }, volume: 100 }, 'preview plays the built-in sound')
+  assert.deepEqual(previews[0], { sound: null, slot: 'clip', volume: 100 }, 'preview plays what clips are set to')
+  assert.deepEqual(previews[1], { sound: null, slot: 'screenshot', volume: 100 }, 'and what screenshots are set to')
   assert.equal(previews.at(-1).sound.name, 'airhorn.mp3', 'a picked sound is played once')
   await shot('settings-sounds')
   // Updates: checked on request; an update shows in Settings and the top bar.

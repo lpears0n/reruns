@@ -845,6 +845,48 @@ behaves changed.
   (keep the last decoded frame, convert once); encoder probe results
   cached on disk by driver version; start-up phase timings in the log.
 
+## Sounds (W3), 2026-11-11 (branch `sounds-and-popup`, on top of `startup-memory-updates`)
+
+- **`scripts/make-sounds.mjs`** (Node, no dependencies, same output
+  every run) writes the three built-in sounds to
+  `app/src-tauri/sounds/`, 48 kHz mono 16-bit WAV: `clip-saved.wav`
+  (two soft notes a fifth apart, D5 then A5, 270 ms, peak -14 dBFS,
+  mean -24.9 dB against the old beep's -25.7), `screenshot.wav` (two
+  band-passed noise clicks 60 ms apart over a faint 150 Hz thump,
+  150 ms, peak -8 dBFS since clicks are so short, mean -25.8 dB) and
+  `save-failed.wav` (the chime downwards an octave lower, 300 ms).
+  Tune by editing the numbers and running it again; the owner hasn't
+  heard them yet.
+- **Screenshots have their own default** (`system::Cue`): with
+  `screenshot_sound` unset they play the shutter, unless the clip sound
+  is a file of the user's, which they still follow. Settings shows
+  "Built-in chime" / "Built-in shutter" / "Same as clips"; the
+  screenshot row's reset is "Use default". `preview_sound` takes the
+  slot and resolves an unset sound from the settings.
+- **Sounds play at the key press.** They used to play when the file was
+  written (a clip: after the whole MP4). `service.rs` emits
+  `clip-saving` / `screenshot-saving` as the command arrives while a
+  game is recorded, and `save-failed` if that save then fails;
+  `lib.rs::play_cue` plays the chime, shutter or failed sound. An
+  edit's sound still plays when it is rendered. The popup and
+  notification still come when the file exists.
+- **Instant playback on Windows:** `system::play_sound` scales a plain
+  16-bit PCM WAV in memory (`scaled_pcm16`: the built-in sounds, and
+  such files of the user's) and hands it to `PlaySoundW(SND_MEMORY |
+  SND_ASYNC)`; the image is kept in a static until the next sound
+  replaces it. Anything else (MP3, OGG…) and all of Linux still go
+  through GStreamer's `playbin`. Checked here: the ignored test
+  `windows_plays_a_built_in_sound_without_waiting` (volume 0) starts
+  all three in under 100 ms each. Not yet heard over a game; custom
+  non-WAV sounds keep playbin's start-up delay (converting them to WAV
+  on import would need `wavenc` in the bundle).
+- Running `scripts/collect-gstreamer.ps1` locally fills
+  `app/src-tauri/gst/`, and the next debug build copies those DLLs
+  beside the test binaries, which then load GStreamer without its
+  plugins ("no element uridecodebin"). Delete the DLLs from
+  `app/src-tauri/gst/bin`, `gst/plugins`, `target/debug` and
+  `target/debug/gst-plugins` afterwards.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner

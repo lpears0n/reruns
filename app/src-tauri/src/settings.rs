@@ -25,7 +25,9 @@ pub struct Settings {
     pub sound_volume: u32,
     /// Played when a clip is saved or an edit renders.
     pub clip_sound: Sound,
-    /// Played when a screenshot is saved; `None` = same as `clip_sound`.
+    /// Played when a screenshot is taken. `None`: the built-in shutter,
+    /// or the clip sound if that is a file of the user's (as it was
+    /// before screenshots had a sound of their own).
     pub screenshot_sound: Option<Sound>,
     /// Windows: a popup over the game when recording starts and on a save.
     pub overlay: bool,
@@ -233,7 +235,9 @@ impl Settings {
         }
     }
 
-    /// The sound for a screenshot, resolving "same as clips".
+    /// The sound for a screenshot: the one picked for it, else the
+    /// user's own clip sound, else the built-in one (for
+    /// `system::Cue::Screenshot`, the shutter).
     pub fn screenshot_sound(&self) -> &Sound {
         self.screenshot_sound.as_ref().unwrap_or(&self.clip_sound)
     }

@@ -408,10 +408,47 @@ async fn import_sound(path: PathBuf, slot: String) -> CmdResult<settings::Sound>
     Ok(settings::Sound::Custom { path: copy, name })
 }
 
-/// Play a sound now, for the Preview buttons in Settings.
+/// Play a sound now, for the Preview buttons in Settings: `sound`, or
+/// with none given the one `slot` ("clip" or "screenshot") plays as set.
 #[tauri::command]
-fn preview_sound(sound: settings::Sound, volume: u32) {
-    system::play_sound(&sound, volume);
+fn preview_sound(
+    state: State<'_, AppState>,
+    sound: Option<settings::Sound>,
+    slot: String,
+    volume: u32,
+) {
+    let cue = if slot == "screenshot" {
+        system::Cue::Screenshot
+    } else {
+        system::Cue::Clip
+    };
+    let sound = sound.unwrap_or_else(|| {
+        let s = state.settings.lock().unwrap();
+        match cue {
+            system::Cue::Screenshot => s.screenshot_sound().clone(),
+            _ => s.clip_sound.clone(),
+        }
+    });
+    system::play_sound(&sound, cue, volume);
+}
+
+/// The sound for `cue`, if sounds are on: played as a save begins (the
+/// key press), or when it turns out to have failed.
+fn play_cue(app: &AppHandle, cue: system::Cue) {
+    let state = app.state::<AppState>();
+    let (sound, volume) = {
+        let s = state.settings.lock().unwrap();
+        if !s.sound_on_save {
+            return;
+        }
+        let sound = match cue {
+            system::Cue::Clip => s.clip_sound.clone(),
+            system::Cue::Screenshot => s.screenshot_sound().clone(),
+            system::Cue::Failed => settings::Sound::Builtin,
+        };
+        (sound, s.sound_volume)
+    };
+    system::play_sound(&sound, cue, volume);
 }
 
 #[tauri::command]
@@ -812,23 +849,18 @@ impl Saved {
     }
 }
 
-/// Notification, sound and overlay for a newly saved clip, edit or
-/// screenshot, as configured.
+/// Notification and overlay for a newly saved clip, edit or screenshot,
+/// as configured. A clip's or screenshot's sound has played already, at
+/// the key press (`play_cue`); an edit's plays here, when it is rendered.
 fn announce_saved(app: &AppHandle, saved: Saved, path: &std::path::Path) {
-    let (notify, sound) = {
-        let state = app.state::<AppState>();
-        let s = state.settings.lock().unwrap();
-        let sound = match saved {
-            Saved::Clip | Saved::Edit => s.clip_sound.clone(),
-            Saved::Screenshot => s.screenshot_sound().clone(),
-        };
-        (
-            s.notify_on_save,
-            s.sound_on_save.then_some((sound, s.sound_volume)),
-        )
-    };
-    if let Some((sound, volume)) = sound {
-        system::play_sound(&sound, volume);
+    let notify = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .notify_on_save;
+    if matches!(saved, Saved::Edit) {
+        play_cue(app, system::Cue::Clip);
     }
     let summary = saved.summary();
     let game = path
@@ -1083,6 +1115,14 @@ pub fn run() {
                     };
                     announce_saved(&handle, saved, &path);
                 });
+            }
+            for (event, cue) in [
+                (service::CLIP_SAVING, system::Cue::Clip),
+                (service::SCREENSHOT_SAVING, system::Cue::Screenshot),
+                (service::SAVE_FAILED, system::Cue::Failed),
+            ] {
+                let handle = app.handle().clone();
+                app.listen_any(event, move |_| play_cue(&handle, cue));
             }
             {
                 let handle = app.handle().clone();

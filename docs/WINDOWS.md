@@ -98,7 +98,7 @@ The release workflow does this automatically.
 | Audio | `pipewiresrc` (sink monitor, mic node) | `wasapi2src` (loopback, device id) |
 | Game detection | `/proc` environ (`SteamAppId`) and Wine exes | window walk, exe under a Steam library, or a fullscreen window |
 | Hotkey | KGlobalAccel / GlobalShortcuts portal | `tauri-plugin-global-shortcut` (`RegisterHotKey`) |
-| Notifications, sound | D-Bus, freedesktop sounds | `tauri-plugin-notification`, `PlaySound` alias |
+| Notifications, sound | D-Bus, freedesktop sounds | `tauri-plugin-notification`, `PlaySound` from memory (GStreamer for non-WAV files) |
 | Autostart | XDG autostart entry | `HKCU\...\Run` value |
 | Control socket | Unix socket in `$XDG_RUNTIME_DIR` | named pipe `\\.\pipe\reruns-<user>` |
 | Disk space | `statvfs` | `GetDiskFreeSpaceExW` |
