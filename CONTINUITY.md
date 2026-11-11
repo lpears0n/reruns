@@ -845,6 +845,66 @@ behaves changed.
   (keep the last decoded frame, convert once); encoder probe results
   cached on disk by driver version; start-up phase timings in the log.
 
+## Sounds (W3), 2026-11-11 (branch `sounds-and-popup`, on top of `startup-memory-updates`)
+
+- **`scripts/make-sounds.mjs`** (Node, no dependencies, same output
+  every run) writes the three built-in sounds to
+  `app/src-tauri/sounds/`, 48 kHz mono 16-bit WAV: `clip-saved.wav`
+  (two soft notes a fifth apart, D5 then A5, 270 ms, peak -14 dBFS,
+  mean -24.9 dB against the old beep's -25.7), `screenshot.wav` (two
+  band-passed noise clicks 60 ms apart over a faint 150 Hz thump,
+  150 ms, peak -8 dBFS since clicks are so short, mean -25.8 dB) and
+  `save-failed.wav` (the chime downwards an octave lower, 300 ms).
+  Tune by editing the numbers and running it again; the owner hasn't
+  heard them yet.
+- **Echo added at the owner's request (same day):** `echo()` in the
+  script adds a few duller, quieter copies after each sound, on top of
+  the sound at its old level (the peak is set before the echo). Lengths
+  are now 413 / 233 / 443 ms. On the chimes the delays are multiples of
+  6.81 ms, a whole number of periods of every note used, so each
+  reflection adds to its note: the first try at 47 ms arrived out of
+  step and made the chime quieter (a comb filter). Chime over its first
+  270 ms: -22.8 dB mean, from -24.9.
+- **Clicks removed, sounds slowed (owner: "clippy, not cleanly made"):**
+  each sound was written into a buffer that ended while it still rang
+  (the chime at 270 ms, at 7% of its level), and the echo copied that
+  cut two or three times: kinks 50–440 times the usual size at 265,
+  315 and 365 ms. Sounds are now written into 1.2 s of room, fade out
+  by themselves, get their echo, and are trimmed where they fall under
+  -54 dB of the peak with a 40 ms cosine fade; the largest kink left is
+  the first sample of the attack. Notes rise over 12 ms (was 6), come
+  110 ms apart (was 85) and ring longer; the shutter's clicks are 80 ms
+  apart (was 60). Files are 784 / 285 / 872 ms, most of it a quiet tail.
+- **Screenshots have their own default** (`system::Cue`): with
+  `screenshot_sound` unset they play the shutter, unless the clip sound
+  is a file of the user's, which they still follow. Settings shows
+  "Built-in chime" / "Built-in shutter" / "Same as clips"; the
+  screenshot row's reset is "Use default". `preview_sound` takes the
+  slot and resolves an unset sound from the settings.
+- **Sounds play at the key press.** They used to play when the file was
+  written (a clip: after the whole MP4). `service.rs` emits
+  `clip-saving` / `screenshot-saving` as the command arrives while a
+  game is recorded, and `save-failed` if that save then fails;
+  `lib.rs::play_cue` plays the chime, shutter or failed sound. An
+  edit's sound still plays when it is rendered. The popup and
+  notification still come when the file exists.
+- **Instant playback on Windows:** `system::play_sound` scales a plain
+  16-bit PCM WAV in memory (`scaled_pcm16`: the built-in sounds, and
+  such files of the user's) and hands it to `PlaySoundW(SND_MEMORY |
+  SND_ASYNC)`; the image is kept in a static until the next sound
+  replaces it. Anything else (MP3, OGG…) and all of Linux still go
+  through GStreamer's `playbin`. Checked here: the ignored test
+  `windows_plays_a_built_in_sound_without_waiting` (volume 0) starts
+  all three in under 100 ms each. Not yet heard over a game; custom
+  non-WAV sounds keep playbin's start-up delay (converting them to WAV
+  on import would need `wavenc` in the bundle).
+- Running `scripts/collect-gstreamer.ps1` locally fills
+  `app/src-tauri/gst/`, and the next debug build copies those DLLs
+  beside the test binaries, which then load GStreamer without its
+  plugins ("no element uridecodebin"). Delete the DLLs from
+  `app/src-tauri/gst/bin`, `gst/plugins`, `target/debug` and
+  `target/debug/gst-plugins` afterwards.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner

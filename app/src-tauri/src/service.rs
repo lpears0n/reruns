@@ -17,6 +17,15 @@ use crate::{games, library};
 pub const STATUS_CHANGED: &str = "status-changed";
 pub const CLIP_SAVED: &str = "clip-saved";
 pub const SCREENSHOT_SAVED: &str = "screenshot-saved";
+/// The clip hotkey was pressed while a game is recorded: what the clip
+/// will hold is fixed now, and writing the file follows. The sound plays
+/// on this, at the key press, not a second later when the file is done.
+pub const CLIP_SAVING: &str = "clip-saving";
+/// The same for a screenshot.
+pub const SCREENSHOT_SAVING: &str = "screenshot-saving";
+/// A save announced by one of the two events above didn't work; the
+/// payload is the reason.
+pub const SAVE_FAILED: &str = "save-failed";
 /// A game started recording; the payload is its name.
 pub const RECORDING_STARTED: &str = "recording-started";
 /// A moment was marked; the payload is a [`Marked`].
@@ -209,7 +218,13 @@ async fn run(
         tokio::select! {
             ev = events.recv() => {
                 let Some(ev) = ev else { break };
-                let changed = match auto.handle(ev).await {
+                let handled = auto.handle(ev).await;
+                // After every scan, not only a start or stop: a game that
+                // replaces its window keeps its session. And before the
+                // event below, whose popup checks this.
+                #[cfg(windows)]
+                crate::overlay::set_game(auto.window());
+                let changed = match handled {
                     Ok(Some(change)) => {
                         if let Change::Started(g) = &change {
                             let _ = app.emit(RECORDING_STARTED, &g.name);
@@ -238,7 +253,14 @@ async fn run(
                 match cmd {
                     Cmd::Status(r) => drop(r.send(status(&auto, replay_seconds, session.as_ref()))),
                     Cmd::Save(dir, r) => {
+                        let announced = auto.current_game().is_some();
+                        if announced {
+                            let _ = app.emit(CLIP_SAVING, ());
+                        }
                         let res = auto.save(&dir, None).await.map_err(|e| format!("{e:#}"));
+                        if let (true, Err(e)) = (announced, &res) {
+                            let _ = app.emit(SAVE_FAILED, e);
+                        }
                         if let Ok(saved) = &res {
                             if let Some(g) = auto.current_game() {
                                 let meta = library::ClipMeta {
@@ -257,7 +279,14 @@ async fn run(
                         drop(r.send(res.map(|s| s.path)));
                     }
                     Cmd::Screenshot(dir, r) => {
+                        let announced = auto.current_game().is_some();
+                        if announced {
+                            let _ = app.emit(SCREENSHOT_SAVING, ());
+                        }
                         let res = auto.screenshot(&dir).await.map_err(|e| format!("{e:#}"));
+                        if let (true, Err(e)) = (announced, &res) {
+                            let _ = app.emit(SAVE_FAILED, e);
+                        }
                         if let Ok(p) = &res {
                             let _ = app.emit(SCREENSHOT_SAVED, p);
                         }

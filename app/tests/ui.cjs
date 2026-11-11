@@ -466,15 +466,20 @@ async function runScenario(scenario, browser) {
   await page.getByText("Can't open: device not found").waitFor()
   await page.waitForTimeout(150)
   await shot('settings-audio')
-  // Save sounds: pick a file for clips; screenshots follow it.
+  // Save sounds: a chime for clips and a shutter for screenshots; pick a
+  // file for clips and screenshots follow it.
   await page.getByRole('button', { name: 'General' }).click()
+  assert.ok(await page.getByText('Built-in chime').isVisible(), 'clips start on the chime')
+  assert.ok(await page.getByText('Built-in shutter').isVisible(), 'screenshots start on the shutter')
   await page.getByRole('button', { name: 'Play the clip sound' }).click()
+  await page.getByRole('button', { name: 'Play the screenshot sound' }).click()
   await page.getByRole('button', { name: 'Choose file…' }).first().click()
   await page.getByText('airhorn.mp3').first().waitFor()
   assert.equal(await page.getByRole('button', { name: 'Use default' }).count(), 1, 'a custom sound can be reset')
   assert.ok(await page.getByText('Same as clips').isVisible(), 'screenshots use the clip sound')
   const previews = await page.evaluate(() => window.__previews)
-  assert.deepEqual(previews[0], { sound: { kind: 'builtin' }, volume: 100 }, 'preview plays the built-in sound')
+  assert.deepEqual(previews[0], { sound: null, slot: 'clip', volume: 100 }, 'preview plays what clips are set to')
+  assert.deepEqual(previews[1], { sound: null, slot: 'screenshot', volume: 100 }, 'and what screenshots are set to')
   assert.equal(previews.at(-1).sound.name, 'airhorn.mp3', 'a picked sound is played once')
   await shot('settings-sounds')
   // Updates: checked on request; an update shows in Settings and the top bar.
@@ -545,10 +550,10 @@ async function overlayScenario(browser) {
   const fire = (payload) =>
     page.evaluate((p) => window[`_${window.__listeners['overlay-show']}`]({ event: 'overlay-show', id: 1, payload: p }), payload)
 
-  await fire({ kind: 'ready', title: 'Ready to record', detail: "Tom Clancy's Rainbow Six Siege", key: 'F8', ms: 3500 })
+  await fire({ kind: 'ready', title: "Recording Tom Clancy's Rainbow Six Siege", detail: '', key: 'F8', ms: 3500 })
   await page.waitForTimeout(300)
-  assert.equal(await page.locator('#title').textContent(), 'Ready to record')
-  assert.ok((await page.locator('#detail').textContent()).startsWith('Press F8 to clip'))
+  assert.equal(await page.locator('#title').textContent(), "Recording Tom Clancy's Rainbow Six Siege")
+  assert.equal(await page.locator('#detail').textContent(), 'Press F8 to clip')
   assert.ok(await page.locator('.rec').isVisible(), 'recording dot on ready')
   await page.screenshot({ path: path.join(out, 'overlay-ready.png') })
 
@@ -560,7 +565,7 @@ async function overlayScenario(browser) {
     assert.equal(await page.locator('.glyph:visible').count(), 1, `one glyph on ${kind}`)
   }
 
-  await fire({ kind: 'saved', title: 'Clip saved', detail: "Tom Clancy's Rainbow Six Siege", key: null, ms: 900 })
+  await fire({ kind: 'saved', title: 'Clip saved', detail: "Last 30\u2009s · Tom Clancy's Rainbow Six Siege", key: null, ms: 900 })
   await page.waitForTimeout(500)
   assert.equal(await page.locator('#title').textContent(), 'Clip saved')
   assert.ok(await page.locator('.check').isVisible(), 'check mark on saved')

@@ -7,11 +7,11 @@
   </head>
   <body>
     <div id="popup" class="popup" role="status" aria-live="polite">
-      <span class="tile" aria-hidden="true">
+      <span class="mark" aria-hidden="true">
         <span class="rec"></span>
         <!-- Icons from Lucide (ISC), as in the app. -->
         <svg class="glyph check" viewBox="0 0 24 24">
-          <path d="M5 12.5l4.5 4.5L19 7.5" pathLength="1" />
+          <path d="M20 6 9 17l-5-5" />
         </svg>
         <svg class="glyph camera" viewBox="0 0 24 24">
           <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
@@ -26,7 +26,6 @@
         <span id="title" class="title"></span>
         <span id="detail" class="detail"></span>
       </span>
-      <span class="life" aria-hidden="true"></span>
     </div>
     <script type="module" src="/src/overlay.ts"></script>
   </body>

@@ -220,7 +220,9 @@ export const api = {
   stopAudioMeters: () => invoke<void>('stop_audio_meters'),
   /** Check a picked sound file and copy it in; resolves to the sound to store. */
   importSound: (path: string, slot: 'clip' | 'screenshot') => invoke<Sound>('import_sound', { path, slot }),
-  previewSound: (sound: Sound, volume: number) => invoke<void>('preview_sound', { sound, volume }),
+  /** Play `sound`, or with null whatever `slot` plays as set. */
+  previewSound: (sound: Sound | null, slot: 'clip' | 'screenshot', volume: number) =>
+    invoke<void>('preview_sound', { sound, slot, volume }),
   /** Whether this build can update itself, and its version. */
   updateSupport: () => invoke<{ configured: boolean; version: string }>('update_support'),
   /** What the automatic checks found so far (also sent as `update-available`). */

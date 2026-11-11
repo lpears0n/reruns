@@ -4,7 +4,7 @@
 
 import { emit, listen } from '@tauri-apps/api/event'
 import './overlay.css'
-import { ACCENTS, type Accent } from './lib/prefs.svelte'
+import { ACCENTS, type Accent } from './lib/accents'
 
 interface Popup {
   kind: 'ready' | 'saved' | 'screenshot' | 'marked'
@@ -25,7 +25,7 @@ let fade: ReturnType<typeof setTimeout> | undefined
  *  screen). Matches `WIDTH` in src-tauri/src/overlay.rs. */
 const DESIGN_WIDTH = 480
 /** How long the card takes to fade out before the window is hidden. */
-const EXIT_MS = 220
+const EXIT_MS = 100
 
 /** The backend sizes the window for the game's resolution; zoom the page
  *  so the design fills it, sharp at any size. */
@@ -64,7 +64,6 @@ export function show(p: Popup) {
   }
   detail.append(p.detail)
   const visible = Math.max(0, p.ms - EXIT_MS)
-  popup.style.setProperty('--life', `${visible}ms`)
   // Restart the entrance even if a popup is already showing.
   popup.classList.remove('in')
   void popup.offsetWidth
