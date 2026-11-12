@@ -95,6 +95,8 @@ impl MediaServer {
         else {
             return respond(&mut sock, "404 Not Found", &[]).await;
         };
+        // `?thumb` asks for a screenshot at card size instead of the file.
+        let (encoded, query) = encoded.split_once('?').unwrap_or((encoded, ""));
         let path = PathBuf::from(percent_decode(encoded));
         let Ok(path) = path.canonicalize() else {
             return respond(&mut sock, "404 Not Found", &[]).await;
@@ -102,6 +104,22 @@ impl MediaServer {
         if !self.is_allowed(&path) || !matches!(method, "GET" | "HEAD") {
             return respond(&mut sock, "403 Forbidden", &[]).await;
         }
+        let path = match query {
+            "" => path,
+            "thumb" if path.extension().is_some_and(|e| e == "png") => {
+                match tokio::task::spawn_blocking(move || crate::library::screenshot_thumb(&path))
+                    .await
+                {
+                    Ok(Ok(thumb)) => thumb,
+                    Ok(Err(e)) => {
+                        tracing::warn!("screenshot thumbnail: {e:#}");
+                        return respond(&mut sock, "404 Not Found", &[]).await;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            _ => return respond(&mut sock, "404 Not Found", &[]).await,
+        };
 
         let mut file = tokio::fs::File::open(&path).await?;
         let len = file.metadata().await?.len();
@@ -186,6 +204,8 @@ fn content_type(path: &Path) -> &'static str {
         Some("webm") => "video/webm",
         Some("mov") => "video/quicktime",
         Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("png") => "image/png",
         _ => "application/octet-stream",
     }
 }
@@ -315,6 +335,11 @@ mod tests {
                 && part.ends_with("234"),
             "{part}"
         );
+        // Thumbnails are made for screenshots only; other queries are refused.
+        for q in ["?thumb", "?other"] {
+            let r = get(format!("{}{q}", url_path(&file)), None).await;
+            assert!(r.starts_with("HTTP/1.1 404"), "{q}: {r}");
+        }
 
         let wrong_token = get(
             format!("nottoken/{}", url_path(&file).split_once('/').unwrap().1),

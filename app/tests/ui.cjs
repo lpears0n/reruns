@@ -51,6 +51,9 @@ function fixtures(scenario) {
     }
   }
   const empty = scenario === 'empty'
+  // F9 screenshots, saved next to the game's clips.
+  const shot = (t, ago) => ({ path: `/home/u/Videos/Reruns/ELDEN RING/${t}.png`, game: 'ELDEN RING', size: 4e6, modified_ms: now - ago })
+  const screenshots = empty ? [] : [shot('2026-11-12_10-00-00', h / 2), shot('2026-11-12_09-00-00', h * 1.5)]
   return {
     // 'full' runs as on Windows: no system frame, the header carries the
     // window controls. The others keep the frame, as on Linux.
@@ -66,6 +69,7 @@ function fixtures(scenario) {
     },
     list_clips: empty ? [] : clips,
     list_games: empty ? [] : games,
+    screenshots,
     get_storage: { clips_bytes: 3.7e9, clip_count: clips.length, disk_free: 120e9, disk_total: 500e9, limit_bytes: 25e9 },
     get_capabilities: { display_hz: 144, encoders: [{ encoder: 'nvenc', codecs: ['h264', 'hevc', 'av1'] }, { encoder: 'x264', codecs: ['h264'] }], mic_devices: [{ id: 'mic1', name: 'Blue Yeti' }], output_devices: [{ id: 'out-speakers', name: 'Speakers (Realtek Audio)' }, { id: 'out-headset', name: 'Headset Earphone (Arctis Nova 7)' }] },
     media_base: 'http://127.0.0.1:1/x/',
@@ -133,9 +137,17 @@ function mockBridge(data) {
       }
       if (cmd === 'list_library') {
         const ignored = data.get_settings.ignored_games.map((i) => i.name.toLowerCase())
-        return { clips: data.list_clips, games: data.list_games.filter((g) => !ignored.includes(g.name.toLowerCase())) }
+        return {
+          clips: data.list_clips,
+          games: data.list_games.filter((g) => !ignored.includes(g.name.toLowerCase())),
+          screenshots: data.screenshots,
+        }
       }
-      if (cmd === 'delete_clip') { data.list_clips = data.list_clips.filter((c) => c.path !== args.path); return null }
+      if (cmd === 'delete_clip') {
+        data.list_clips = data.list_clips.filter((c) => c.path !== args.path)
+        data.screenshots = data.screenshots.filter((s) => s.path !== args.path)
+        return null
+      }
       if (cmd === 'plugin:event|listen') {
         // Remember the handler so a test can fire the event at the page.
         (window.__listeners ||= {})[args.event] = args.handler
@@ -168,7 +180,10 @@ async function runScenario(scenario, browser) {
   // Every clip plays the same small ultrawide test video (VP9: the test
   // Chromium has no H.264), so the viewer is shot with a real picture.
   const video = fs.readFileSync(path.join(__dirname, 'fixtures', 'clip.webm'))
+  const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64')
   await page.route('http://127.0.0.1:1/**', (r) => {
+    // A screenshot's card-sized image from the media server.
+    if (r.request().url().endsWith('?thumb')) return r.fulfill({ status: 200, body: PIXEL, headers: { 'Content-Type': 'image/png' } })
     // Byte ranges, like the app's media server, so the player can seek.
     const m = /bytes=(\d+)-(\d*)/.exec(r.request().headers().range ?? '')
     const from = m ? Number(m[1]) : 0
@@ -183,12 +198,13 @@ async function runScenario(scenario, browser) {
       },
     })
   })
-  // Files on disk: Steam art loads on its second request, the rest is missing.
-  const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64')
+  // Files on disk: screenshots load, Steam art loads on its second request,
+  // the rest is missing.
   const hits = {}
   await page.route('http://127.0.0.1:2/**', (r) => {
     const file = decodeURIComponent(new URL(r.request().url()).pathname.slice(1))
     hits[file] = (hits[file] ?? 0) + 1
+    if (file.startsWith('/home/u/Videos/') && file.endsWith('.png')) return r.fulfill({ status: 200, body: PIXEL, headers: { 'Content-Type': 'image/png' } })
     if (!file.includes('/librarycache/') || hits[file] === 1) return r.fulfill({ status: 404 })
     return r.fulfill({ status: 200, body: PIXEL, headers: { 'Content-Type': 'image/png' } })
   })
@@ -220,6 +236,35 @@ async function runScenario(scenario, browser) {
     await page.waitForTimeout(200)
     assert.equal(await page.getByRole('button', { name: 'Hades II is not a game' }).count(), 0, 'card removed')
     assert.equal(await page.getByRole('button', { name: 'Counter-Strike 2 is not a game' }).count(), 1, 'others stay')
+
+    // Screenshots show on their game's page among its clips, open over it,
+    // copy as a file, and delete with Undo like clips.
+    await page.getByRole('button', { name: 'View clips' }).click()
+    const shots = page.getByRole('button', { name: /^Open ELDEN RING screenshot/ })
+    await shots.first().waitFor()
+    assert.equal(await shots.count(), 2, 'both screenshots on the game page')
+    await page.waitForFunction(() => {
+      const img = document.querySelector('main img[src$="?thumb"]')
+      return img?.complete && img.naturalWidth > 0
+    })
+    await shots.first().click()
+    const viewer = page.getByRole('dialog', { name: 'ELDEN RING screenshot' })
+    await viewer.waitFor()
+    await page.waitForFunction(() => document.querySelector('dialog img')?.naturalWidth > 0)
+    await page.screenshot({ path: path.join(out, 'screenshot-viewer.png') })
+    await viewer.getByRole('button', { name: 'Copy' }).click()
+    await page.getByText('Screenshot copied').waitFor()
+    assert.match(await page.evaluate(() => window.__copied), /\.png$/, 'the PNG went to copy_clip')
+    await page.keyboard.press('Escape')
+    assert.equal(await viewer.count(), 0, 'Esc closes the screenshot')
+    assert.equal(await page.getByRole('button', { name: 'Back to games' }).count(), 1, 'and stays on the game page')
+    await page.screenshot({ path: path.join(out, 'game-screenshots.png') })
+    await page.getByRole('button', { name: 'Delete screenshot' }).first().click()
+    await page.getByText('Deleted screenshot').waitFor()
+    assert.equal(await shots.count(), 1, 'a deleted screenshot vanishes at once')
+    await page.getByRole('button', { name: 'Undo' }).click()
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label^="Open ELDEN RING screenshot"]').length === 2)
+    await page.keyboard.press('Escape')
   }
   // The window controls show only where the system frame is off.
   assert.equal(await page.getByRole('button', { name: 'Close', exact: true }).count(), scenario === 'full' ? 1 : 0)

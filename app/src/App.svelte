@@ -20,6 +20,7 @@
     onRenderProgress,
     onStatusChanged,
     onThumbnailReady,
+    type Screenshot,
     type Settings,
     type Status,
     type UpdateInfo,
@@ -37,6 +38,7 @@
   import Sidebar, { type NavId } from './lib/Sidebar.svelte'
   import StateMessage from './lib/StateMessage.svelte'
   import StatusBar from './lib/StatusBar.svelte'
+  import ScreenshotViewer from './lib/ScreenshotViewer.svelte'
   import Toast, { type ToastData } from './lib/Toast.svelte'
   import UpdatePrompt, { skippedUpdate } from './lib/UpdatePrompt.svelte'
   import WindowControls from './lib/WindowControls.svelte'
@@ -87,6 +89,9 @@
   // clips is slow and unnecessary.
   let allClips = $state.raw<Clip[]>([])
   let games = $state.raw<GameEntry[]>([])
+  let screenshots = $state.raw<Screenshot[]>([])
+  /** Screenshot open in the viewer, over everything. */
+  let shot = $state<Screenshot | null>(null)
   let loading = $state(true)
   /** Wall clock for live counters (buffer fill, "playing for"); ticks once
    *  a second while recording, otherwise once a minute. No IPC involved. */
@@ -105,9 +110,10 @@
   // UI at once and are only removed from disk when the toast expires.
   // Raw state: entries are compared by identity when undone or committed,
   // which a deep proxy would break. The array is always reassigned.
-  let pending = $state.raw<{ clips: Clip[]; timer: ReturnType<typeof setTimeout> }[]>([])
+  let pending = $state.raw<{ clips: (Clip | Screenshot)[]; timer: ReturnType<typeof setTimeout> }[]>([])
   const hidden = $derived(new Set(pending.flatMap((p) => p.clips.map((c) => c.path))))
   const clips = $derived(hidden.size ? allClips.filter((c) => !hidden.has(c.path)) : allClips)
+  const shots = $derived(hidden.size ? screenshots.filter((s) => !hidden.has(s.path)) : screenshots)
 
   const game = $derived(games.find((g) => g.name === gameName) ?? null)
   const hotkey = $derived(settings?.hotkey ?? 'F8')
@@ -116,10 +122,10 @@
     view === 'games' ? 'Games' : view === 'game' ? (game?.name ?? 'Games') : view === 'clips' ? 'All clips' : 'Settings',
   )
 
-  async function copyClip(c: Clip) {
+  async function copyClip(c: Clip | Screenshot) {
     try {
       await api.copyClip(c.path)
-      notify('Clip copied')
+      notify('title' in c ? 'Clip copied' : 'Screenshot copied')
     } catch (e) {
       notify(String(e), true)
     }
@@ -167,6 +173,7 @@
       const library = await api.library()
       allClips = library.clips
       games = library.games
+      screenshots = library.screenshots
       retryFailedArt()
       libraryError = null
       writeLibraryCache(allClips, games)
@@ -256,9 +263,10 @@
   }
 
   /** Hide the clips now; delete them for real when the undo window closes. */
-  function remove(list: Clip[]) {
+  function remove(list: (Clip | Screenshot)[]) {
     if (!list.length) return
     if (viewing && list.some((c) => c.path === viewing!.path)) viewing = null
+    if (shot && list.some((c) => c.path === shot!.path)) shot = null
     // One Undo covers every delete still pending, so they all get the
     // full time again.
     for (const p of pending) {
@@ -268,7 +276,8 @@
     const entry = { clips: list, timer: setTimeout(() => commit(entry), UNDO_MS) }
     pending = [...pending, entry]
     const n = pending.reduce((sum, p) => sum + p.clips.length, 0)
-    const label = n === 1 ? `Deleted ${list[0].title ?? list[0].game} clip` : `Deleted ${n} clips`
+    const one = list[0]
+    const label = n > 1 ? `Deleted ${n} clips` : 'title' in one ? `Deleted ${one.title ?? one.game} clip` : 'Deleted screenshot'
     showToast({ text: label, action: { label: 'Undo', run: undo } }, UNDO_MS)
   }
 
@@ -553,8 +562,10 @@
           <GameView
             {game}
             {clips}
+            screenshots={shots}
             onback={() => go('games')}
             onopen={(c) => open(c.path)}
+            onshot={(s) => (shot = s)}
             ondelete={(c) => remove([c])}
             onshare={(c) => api.reveal(c.path)}
             oncopy={copyClip}
@@ -609,6 +620,17 @@
 
 {#if toast}
   <Toast data={toast} onclose={closeToast} />
+{/if}
+
+{#if shot}
+  {@const s = shot}
+  <ScreenshotViewer
+    shot={s}
+    onclose={() => (shot = null)}
+    oncopy={() => copyClip(s)}
+    onshare={() => api.reveal(s.path)}
+    ondelete={() => remove([s])}
+  />
 {/if}
 
 {#if updatePrompt && newRelease}

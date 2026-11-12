@@ -192,8 +192,8 @@ pub fn cache_dir() -> PathBuf {
         .join("reruns/thumbs")
 }
 
-/// A clip file found on disk, without decoding it.
-#[derive(Debug, Clone)]
+/// A clip or screenshot file found on disk, without decoding it.
+#[derive(Debug, Clone, Serialize)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub game: String,
@@ -204,6 +204,17 @@ pub struct FileEntry {
 
 /// Every `<clips_dir>/<game>/*.mp4`, cheaply (metadata only).
 pub fn scan(clips_dir: &Path) -> Vec<FileEntry> {
+    scan_ext(clips_dir, "mp4")
+}
+
+/// Screenshots (`<clips_dir>/<game>/*.png`), newest first.
+pub fn screenshots(clips_dir: &Path) -> Vec<FileEntry> {
+    let mut shots = scan_ext(clips_dir, "png");
+    shots.sort_by_key(|s| std::cmp::Reverse(s.modified_ms));
+    shots
+}
+
+fn scan_ext(clips_dir: &Path, ext: &str) -> Vec<FileEntry> {
     let mut out = Vec::new();
     let Ok(games) = std::fs::read_dir(clips_dir) else {
         return out;
@@ -219,7 +230,7 @@ pub fn scan(clips_dir: &Path) -> Vec<FileEntry> {
         };
         for f in files.flatten() {
             let path = f.path();
-            if path.extension().is_none_or(|e| e != "mp4") {
+            if path.extension().is_none_or(|e| e != ext) {
                 continue;
             }
             let Ok(meta) = f.metadata() else { continue };
@@ -362,6 +373,18 @@ pub fn generate(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A screenshot at card size, made on first request and cached like clip
+/// thumbnails (keyed by path, size and time).
+pub fn screenshot_thumb(path: &Path) -> Result<PathBuf> {
+    let (size_bytes, created_ms) = file_times(path)?;
+    let thumb = cache_files(path, size_bytes, created_ms, image_ext()).thumb;
+    if !thumb.exists() {
+        std::fs::create_dir_all(cache_dir())?;
+        clip_core::save::write_atomic(&thumb, &clip_core::media::image_thumbnail(path)?)?;
+    }
+    Ok(thumb)
+}
+
 /// Where to render an edit of `source`: next to it when it's in the library,
 /// otherwise in `<clips_dir>/Edits/`. Never overwrites.
 pub fn edit_path(clips_dir: &Path, source: &Path) -> PathBuf {
@@ -392,12 +415,12 @@ pub fn edit_path(clips_dir: &Path, source: &Path) -> PathBuf {
     }
 }
 
-/// Delete a clip (to the desktop trash if `use_trash`), refusing anything
-/// outside the clips folder.
+/// Delete a clip or screenshot (to the desktop trash if `use_trash`),
+/// refusing anything else and anything outside the clips folder.
 pub fn delete(clips_dir: &Path, path: &Path, use_trash: bool) -> Result<()> {
     let root = clips_dir.canonicalize().context("clips folder missing")?;
     let target = path.canonicalize().context("clip not found")?;
-    if !target.starts_with(&root) || target.extension().is_none_or(|e| e != "mp4") {
+    if !target.starts_with(&root) || target.extension().is_none_or(|e| e != "mp4" && e != "png") {
         bail!("not a clip: {}", path.display());
     }
     let _ = std::fs::remove_file(meta_path(&target));
@@ -483,6 +506,25 @@ mod tests {
         clip_core::init().unwrap(); // `load` asks GStreamer for the image format
         assert!(load(&src, "Hades").unwrap().mixed_audio);
         assert!(!copied.mixed_audio);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn screenshots_are_listed_and_deleted_but_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("reruns-shots-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Hades")).unwrap();
+        for f in ["shot.png", "clip.mp4", "notes.txt"] {
+            std::fs::write(dir.join("Hades").join(f), b"x").unwrap();
+        }
+        let shots = screenshots(&dir);
+        assert_eq!(shots.len(), 1);
+        assert_eq!(
+            (shots[0].game.as_str(), shots[0].path.file_name().unwrap()),
+            ("Hades", "shot.png".as_ref())
+        );
+        assert!(delete(&dir, &dir.join("Hades/notes.txt"), false).is_err());
+        delete(&dir, &dir.join("Hades/shot.png"), false).unwrap();
+        assert!(screenshots(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

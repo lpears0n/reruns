@@ -254,6 +254,7 @@ struct Library {
     clips: Vec<library::Clip>,
     /// Recently played games with clips, sessions and Steam art.
     games: Vec<games::GameEntry>,
+    screenshots: Vec<library::FileEntry>,
 }
 
 /// Every clip and the games they belong to, from one pass over the
@@ -274,7 +275,12 @@ async fn list_library(app: AppHandle, state: State<'_, AppState>) -> CmdResult<L
             playing.as_ref().map(|(n, id, t)| (n.as_str(), *id, *t)),
             &ignored,
         );
-        Library { clips, games }
+        let screenshots = library::screenshots(&dir);
+        Library {
+            clips,
+            games,
+            screenshots,
+        }
     })
     .await
     .map_err(err)?;

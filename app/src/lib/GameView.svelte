@@ -1,15 +1,18 @@
 <script lang="ts">
   import { ArrowLeft } from '@lucide/svelte'
-  import { type Clip, type GameEntry, fileUrl } from './api'
+  import { type Clip, type GameEntry, type Screenshot, fileUrl } from './api'
   import Art from './Art.svelte'
   import ClipCard from './ClipCard.svelte'
   import { bytes, clock, dayKey, dayLabel, duration, playedOnDay, playtime } from './format'
+  import ScreenshotCard from './ScreenshotCard.svelte'
 
   let {
     game,
     clips,
+    screenshots,
     onback,
     onopen,
+    onshot,
     ondelete,
     onshare,
     oncopy,
@@ -17,27 +20,35 @@
   }: {
     game: GameEntry
     clips: Clip[]
+    screenshots: Screenshot[]
     onback: () => void
     onopen: (c: Clip) => void
-    ondelete: (c: Clip) => void
-    onshare: (c: Clip) => void
-    oncopy: (c: Clip) => void
+    onshot: (s: Screenshot) => void
+    ondelete: (c: Clip | Screenshot) => void
+    onshare: (c: Clip | Screenshot) => void
+    oncopy: (c: Clip | Screenshot) => void
     onfavorite: (c: Clip) => void
   } = $props()
 
   const own = $derived(clips.filter((c) => c.game === game.name))
 
-  // Clips grouped by local day, newest first, with that day's play time.
+  // Clips and screenshots grouped by local day, newest first, with that
+  // day's play time.
+  type Item = { at: number } & ({ clip: Clip } | { shot: Screenshot })
   const days = $derived.by(() => {
-    const groups: { key: string; label: string; played: number; clips: Clip[] }[] = []
-    for (const c of own) {
-      const key = dayKey(c.created_ms)
+    const items: Item[] = [
+      ...own.map((clip) => ({ at: clip.created_ms, clip })),
+      ...screenshots.filter((s) => s.game === game.name).map((shot) => ({ at: shot.modified_ms, shot })),
+    ].sort((a, b) => b.at - a.at)
+    const groups: { key: string; label: string; played: number; items: Item[] }[] = []
+    for (const it of items) {
+      const key = dayKey(it.at)
       let g = groups.find((x) => x.key === key)
       if (!g) {
-        g = { key, label: dayLabel(c.created_ms), played: playedOnDay(game.sessions, c.created_ms), clips: [] }
+        g = { key, label: dayLabel(it.at), played: playedOnDay(game.sessions, it.at), items: [] }
         groups.push(g)
       }
-      g.clips.push(c)
+      g.items.push(it)
     }
     return groups
   })
@@ -86,17 +97,29 @@
         {#if day.played}<span class="text-secondary text-muted">Played {playtime(day.played)}</span>{/if}
       </h2>
       <div class="clip-grid grid gap-x-4 gap-y-5">
-        {#each day.clips as c (c.path)}
-          <ClipCard
-            clip={c}
-            fallback={clock(c.created_ms)}
-            subtitle={duration(c.duration)}
-            onopen={() => onopen(c)}
-            ondelete={() => ondelete(c)}
-            onshare={() => onshare(c)}
-            oncopy={() => oncopy(c)}
-            onfavorite={() => onfavorite(c)}
-          />
+        {#each day.items as it ('clip' in it ? it.clip.path : it.shot.path)}
+          {#if 'clip' in it}
+            {@const c = it.clip}
+            <ClipCard
+              clip={c}
+              fallback={clock(c.created_ms)}
+              subtitle={duration(c.duration)}
+              onopen={() => onopen(c)}
+              ondelete={() => ondelete(c)}
+              onshare={() => onshare(c)}
+              oncopy={() => oncopy(c)}
+              onfavorite={() => onfavorite(c)}
+            />
+          {:else}
+            {@const s = it.shot}
+            <ScreenshotCard
+              shot={s}
+              onopen={() => onshot(s)}
+              ondelete={() => ondelete(s)}
+              onshare={() => onshare(s)}
+              oncopy={() => oncopy(s)}
+            />
+          {/if}
         {/each}
       </div>
     </section>

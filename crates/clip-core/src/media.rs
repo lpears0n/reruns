@@ -142,6 +142,34 @@ pub fn inspect(path: &Path) -> Result<ClipInfo> {
     result
 }
 
+/// A still image (a screenshot) scaled to `THUMB_WIDTH`, encoded as
+/// `ImageFormat::available()` like clip thumbnails.
+pub fn image_thumbnail(path: &Path) -> Result<Vec<u8>> {
+    let uri = gst::glib::filename_to_uri(path, None)?;
+    let pipeline = gst::parse::launch(&format!(
+        "uridecodebin uri=\"{uri}\" ! videoconvert ! videoscale \
+         ! video/x-raw,format=RGB,width={THUMB_WIDTH},pixel-aspect-ratio=1/1 \
+         ! appsink name=sink max-buffers=1"
+    ))?
+    .downcast::<gst::Pipeline>()
+    .unwrap();
+    let sink = pipeline
+        .by_name("sink")
+        .unwrap()
+        .downcast::<gst_app::AppSink>()
+        .unwrap();
+    let result = (|| {
+        pipeline.set_state(gst::State::Paused)?;
+        wait_preroll(&pipeline)?;
+        let sample = sink
+            .try_pull_preroll(gst::ClockTime::from_seconds(5))
+            .context("no image decoded")?;
+        encode_image(&frame_of(&sample)?, ImageFormat::available(), 82)
+    })();
+    let _ = pipeline.set_state(gst::State::Null);
+    result
+}
+
 /// Copy a sample's RGB frame into tightly packed rows (GStreamer pads rows).
 pub(crate) fn frame_of(sample: &gst::Sample) -> Result<Frame> {
     let caps = sample.caps().context("frame has no caps")?;
@@ -256,5 +284,33 @@ fn wait_preroll(pipeline: &gst::Pipeline) -> Result<()> {
             _ => unreachable!(),
         },
         None => bail!("timed out opening clip"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screenshots_get_card_sized_thumbnails() {
+        crate::init().unwrap();
+        // A 1280×720 PNG, as a screenshot would be written.
+        let frame = Frame {
+            width: 1280,
+            height: 720,
+            rgb: vec![90; 1280 * 720 * 3],
+        };
+        let dir = std::env::temp_dir().join(format!("reruns-thumb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("shot.png");
+        std::fs::write(&png, encode_image(&frame, ImageFormat::Png, 0).unwrap()).unwrap();
+
+        let thumb = image_thumbnail(&png).unwrap();
+        let magic: &[u8] = match ImageFormat::available() {
+            ImageFormat::Webp => b"RIFF",
+            _ => &[0xff, 0xd8],
+        };
+        assert!(thumb.starts_with(magic), "not a thumbnail image");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

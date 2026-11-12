@@ -59,6 +59,14 @@ export interface Clip {
   mixed_audio?: boolean
 }
 
+/** A screenshot next to the clips: `<clips folder>/<game>/<time>.png`. */
+export interface Screenshot {
+  path: string
+  game: string
+  size: number
+  modified_ms: number
+}
+
 /** How a size-limited export will be encoded. */
 export interface ExportPlan {
   video_kbps: number
@@ -189,7 +197,7 @@ export const api = {
   save: () => invoke<string>('save_clip'),
   ignoreCurrentGame: () => invoke<Settings>('ignore_current_game'),
   /** Every clip and the games they belong to, from one scan. */
-  library: () => invoke<{ clips: Clip[]; games: GameEntry[] }>('list_library'),
+  library: () => invoke<{ clips: Clip[]; games: GameEntry[]; screenshots: Screenshot[] }>('list_library'),
   deleteClip: (path: string) => invoke<void>('delete_clip', { path }),
   updateClip: (path: string, patch: ClipPatch) => invoke<Clip>('update_clip', { path, patch }),
   reveal: (path: string) => invoke<void>('reveal_clip', { path }),
@@ -287,3 +295,5 @@ export async function initMedia() {
   mediaBase = await invoke<string>('media_base')
 }
 export const videoUrl = (path: string) => mediaBase + encodeURIComponent(path)
+/** A screenshot at card size, made by the media server on first request. */
+export const thumbUrl = (path: string) => videoUrl(path) + '?thumb'
