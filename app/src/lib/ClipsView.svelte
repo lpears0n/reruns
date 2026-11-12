@@ -114,7 +114,7 @@
 
   function onkeydown(e: KeyboardEvent) {
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement
-    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    if (((e.ctrlKey || e.metaKey) && e.key === 'f') || (e.key === '/' && !typing)) {
       e.preventDefault()
       search?.focus()
       search?.select()
@@ -137,7 +137,7 @@
 
 {#if clips.length}
   <div class="mx-auto max-w-(--container-library) space-y-5">
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center justify-end gap-2">
       <span class="flex-none text-secondary text-muted tabular-nums">{shown.length} clip{shown.length === 1 ? '' : 's'} · {bytes(total)}</span>
       <div class="min-w-4 flex-1"></div>
 

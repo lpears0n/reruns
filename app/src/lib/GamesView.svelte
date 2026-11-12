@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, CircleAlert, FolderOpen, Keyboard, MonitorPlay, X } from '@lucide/svelte'
+  import { Check, CircleAlert, FolderOpen, Keyboard, X } from '@lucide/svelte'
   import { type GameEntry, type Settings, type Status, fileUrl } from './api'
   import { ago, playtime } from './format'
   import Art from './Art.svelte'
@@ -158,7 +158,7 @@
           {#if capture.ok}<Check size={18} />{:else}<CircleAlert size={18} />{/if}
         </span>
         <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2 text-body font-medium"><MonitorPlay size={15} class="text-muted" /> Capture</div>
+          <div class="text-body font-medium">Capture</div>
           <div class="mt-0.5 truncate text-secondary text-muted" title={capture.text}>{capture.text}</div>
         </div>
         {#if capture.action === 'screen'}
@@ -168,17 +168,18 @@
         {/if}
       </li>
       <li class="flex items-center gap-4 px-5 py-4">
-        <span class="flex size-9 flex-none items-center justify-center rounded-full bg-ok/15 text-ok"><Check size={18} /></span>
+        <!-- Only capture has a state to report; these two are what to know. -->
+        <span class="flex size-9 flex-none items-center justify-center rounded-full bg-raised text-muted"><Keyboard size={17} /></span>
         <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2 text-body font-medium"><Keyboard size={15} class="text-muted" /> Save a clip</div>
+          <div class="text-body font-medium">Save a clip</div>
           <div class="mt-0.5 text-secondary text-muted">Press <kbd class="align-[1px]">{hotkey}</kbd> in any game.</div>
         </div>
         <button class="btn h-8" onclick={() => onsettings('Hotkeys')}>Change</button>
       </li>
       <li class="flex items-center gap-4 px-5 py-4">
-        <span class="flex size-9 flex-none items-center justify-center rounded-full bg-ok/15 text-ok"><Check size={18} /></span>
+        <span class="flex size-9 flex-none items-center justify-center rounded-full bg-raised text-muted"><FolderOpen size={17} /></span>
         <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2 text-body font-medium"><FolderOpen size={15} class="text-muted" /> Clips folder</div>
+          <div class="text-body font-medium">Clips folder</div>
           <div class="mt-0.5 truncate text-secondary text-muted" title={settings?.clips_dir}>{folder}</div>
         </div>
         <button class="btn h-8" onclick={() => onsettings('Storage')}>Change</button>

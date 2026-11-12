@@ -43,6 +43,9 @@
   })
 </script>
 
+<!-- Esc goes up one level (DESIGN §2.7). -->
+<svelte:window onkeydown={(e) => e.key === 'Escape' && onback()} />
+
 <div class="mx-auto max-w-(--container-library) space-y-8">
   <header class="relative h-(--height-banner) overflow-hidden rounded-surface bg-panel">
     {#snippet frame()}

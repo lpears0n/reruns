@@ -242,7 +242,12 @@
     rendering = true
     renderProgress = 0
     try {
-      await api.render(viewing.path, start, end, volumes, maxMb, vertical, slow)
+      const path = await api.render(viewing.path, start, end, volumes, maxMb, vertical, slow)
+      const run = () => {
+        closeToast()
+        open(path)
+      }
+      showToast({ text: 'Clip rendered', action: { label: 'Open', run } })
     } catch (e) {
       if (!/cancelled/.test(String(e))) notify(String(e), true)
     } finally {
@@ -329,24 +334,35 @@
     refreshUsage()
   }
 
+  /** Undo puts the list of ignored apps back as it was. */
+  function ignored(name: string, before: Settings['ignored_games']) {
+    const run = () => {
+      closeToast()
+      if (settings) changeSettings({ ...settings, ignored_games: before }).catch((e) => notify(String(e), true))
+    }
+    showToast({ text: `Ignoring ${name}`, action: { label: 'Undo', run } }, UNDO_MS)
+  }
+
   /** From the Games page: hide it and never detect it again. */
   async function notGame(g: GameEntry) {
     if (!settings) return
+    const before = settings.ignored_games
     try {
       games = games.filter((x) => x.name !== g.name)
-      await changeSettings({ ...settings, ignored_games: [...settings.ignored_games, { name: g.name }] })
-      notify(`Ignoring ${g.name}. Undo in Settings → Recording.`)
+      await changeSettings({ ...settings, ignored_games: [...before, { name: g.name }] })
+      ignored(g.name, before)
     } catch (e) {
       notify(String(e), true)
     }
   }
 
-  /** "Not a game": stops within a scan; undo under Settings → Recording. */
+  /** "Not a game": stops within a scan. */
   async function ignoreGame() {
     const name = status?.game
+    const before = settings?.ignored_games ?? []
     try {
       settings = await api.ignoreCurrentGame()
-      notify(`Ignoring ${name ?? 'that app'}. Undo in Settings → Recording.`)
+      ignored(name ?? 'that app', before)
     } catch (e) {
       notify(String(e), true)
     }
@@ -432,9 +448,13 @@
         if (document.visibilityState === 'visible') refreshLibrary()
       }),
       onClipSaved((path) => {
-        notify(`Saved ${path.split(/[\\/]/).pop()}`)
-        flash = true
-        setTimeout(() => (flash = false), 400)
+        // A render (name_edit, name_edit2, … as library::is_edit) has its
+        // own notice from render(); the flash is for clips from the game.
+        if (!/_edit\d*\.[^.\\/]+$/.test(path)) {
+          notify(`Saved ${path.split(/[\\/]/).pop()}`)
+          flash = true
+          setTimeout(() => (flash = false), 400)
+        }
         refreshLibrary()
         refreshUsage()
       }),

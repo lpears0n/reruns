@@ -117,7 +117,14 @@ function mockBridge(data) {
         const kbps = Math.round((args.maxMb * 1e6 * 8 * 0.92) / args.seconds / 1000)
         return { video_kbps: kbps - 128, audio_kbps: 128, max_height: 720, fps: 30 }
       }
-      if (cmd === 'render_clip') { window.__lastRender = args; return args.path }
+      if (cmd === 'render_clip') {
+        window.__lastRender = args
+        // As the backend does: the edit is announced as saved, then returned.
+        const edit = args.path.replace(/\.mp4$/, '_edit.mp4')
+        const saved = window.__listeners?.['clip-saved']
+        if (saved) window[`_${saved}`]({ event: 'clip-saved', id: 1, payload: edit })
+        return edit
+      }
       if (cmd === 'copy_clip') { window.__copied = args.path; return null }
       if (cmd === 'set_settings') {
         if (window.__settingsError) throw window.__settingsError
@@ -218,6 +225,8 @@ async function runScenario(scenario, browser) {
   assert.equal(await page.getByRole('button', { name: 'Close', exact: true }).count(), scenario === 'full' ? 1 : 0)
   if (scenario === 'empty') {
     await page.getByRole('button', { name: 'Choose screen' }).waitFor()
+    // Nothing is set up yet (no screen, no clip), so no step shows as done.
+    assert.equal(await page.locator('ol .text-ok').count(), 0, 'no step ticked before it is done')
     await page.close()
     return
   }
@@ -680,6 +689,72 @@ async function uxScenario(browser) {
   await page.evaluate(() => (window.__settingsError = "Can't write settings.json"))
   await page.getByRole('switch', { name: 'Launch at login' }).click()
   await page.getByText("Can't write settings.json").waitFor({ timeout: 2000 })
+  await page.evaluate(() => (window.__settingsError = null))
+
+  // Esc goes up one level: from a game page back to Games.
+  await page.keyboard.press('1')
+  await page.getByRole('button', { name: 'View clips' }).click()
+  await page.getByRole('button', { name: 'Back to games' }).waitFor()
+  await page.keyboard.press('Escape')
+  await page.getByRole('heading', { name: 'Recently played' }).waitFor({ timeout: 1000 })
+
+  // "Not a game" can be undone from its notice.
+  await page.getByText('Hades II').first().hover()
+  await page.getByRole('button', { name: 'Hades II is not a game' }).click()
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await page.getByRole('button', { name: 'Hades II is not a game' }).waitFor({ state: 'attached', timeout: 2000 })
+
+  // The Clips controls fit the narrowest window, and / goes to search.
+  await page.setViewportSize({ width: 900, height: 600 })
+  await page.keyboard.press('2')
+  await page.locator('.clip-grid > *').first().waitFor()
+  const overflow = await page.evaluate(() => {
+    const m = document.querySelector('main > div')
+    return m.scrollWidth - m.clientWidth
+  })
+  assert.equal(overflow, 0, 'no sideways scroll at the minimum window width')
+  await page.screenshot({ path: path.join(out, 'clips-narrow.png') })
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.keyboard.press('/')
+  const search = page.getByLabel('Search clips')
+  assert.ok(await search.evaluate((el) => el === document.activeElement), '/ goes to search')
+  assert.equal(await search.inputValue(), '', 'and types nothing')
+  await page.keyboard.press('Escape')
+
+  // Clip cards are real buttons, so Space opens one as Enter does, and a
+  // card still drags out as a file.
+  assert.equal(await page.locator('[role="button"] button').count(), 0, 'no buttons inside a button')
+  const box = await page.getByRole('button', { name: /Open .* clip/ }).first().boundingBox()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 40, { steps: 5 })
+  await page.mouse.up()
+  await page.waitForFunction(() => window.__calls.some((c) => c.startsWith('plugin:drag|')), null, { timeout: 2000 })
+  // Without the plugin's OS drag, Chromium ends the drag in a click.
+  await page.waitForTimeout(200)
+  if (await page.locator('video').count()) await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: /Open .* clip/ }).first().focus()
+  await page.keyboard.press('Space')
+  await page.locator('video').waitFor({ timeout: 1000 })
+
+  // A render isn't a clip saved from the game: no flash on the Clip button,
+  // and its notice opens the new clip.
+  await page.evaluate(() => {
+    window.__flashed = false
+    new MutationObserver(() => document.querySelector('.shutter') && (window.__flashed = true)).observe(document.body, {
+      childList: true,
+      subtree: true,
+    })
+  })
+  await page.keyboard.press('t')
+  await page.getByRole('button', { name: 'Render clip' }).click()
+  await page.waitForTimeout(200)
+  assert.equal(await page.evaluate(() => window.__flashed), false, 'no shutter flash for a render')
+  await page.getByText('Clip rendered').waitFor({ timeout: 1000 })
+  const opens = () => page.evaluate(() => window.__calls.filter((c) => c === 'open_for_edit').length)
+  const opened = await opens()
+  await page.getByRole('button', { name: 'Open', exact: true }).click()
+  await page.waitForFunction((n) => window.__calls.filter((c) => c === 'open_for_edit').length === n + 1, opened)
   await page.close()
 }
 

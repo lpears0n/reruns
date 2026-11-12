@@ -82,24 +82,13 @@
 </script>
 
 <div class="group cv-auto min-w-0">
+  <!-- svelte-ignore a11y_no_static_element_interactions (hover scrubbing only; the button below is the control) -->
   <div
-    class="relative aspect-video cursor-pointer overflow-hidden rounded-card bg-panel ring-1 transition-shadow duration-fast ring-inset focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none
+    class="relative aspect-video overflow-hidden rounded-card bg-panel ring-1 transition-shadow duration-fast ring-inset
       {selected ? 'ring-2 ring-accent' : 'ring-line hover:ring-line-strong'}"
-    onclick={activate}
-    onkeydown={(e) => e.key === 'Enter' && activate()}
-    draggable={!selectable}
-    ondragstart={(e) => {
-      // Out of the window as a real file: drop it into Discord or a folder.
-      e.preventDefault()
-      dragOut(clip.path)
-    }}
     onpointerenter={enter}
     onpointermove={scrub}
     onpointerleave={leave}
-    role="button"
-    tabindex="0"
-    aria-pressed={selectable ? selected : undefined}
-    aria-label="{selectable ? 'Select' : 'Open'} {clip.game} clip from {when(clip.created_ms)}"
   >
     {#if clip.thumbnail}
       <img
@@ -148,9 +137,24 @@
       </span>
     {/if}
 
+    <!-- The whole card opens (or selects) the clip; the action buttons sit
+         beside it, on top, not inside it. -->
+    <button
+      class="absolute inset-0 cursor-pointer rounded-card focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none focus-visible:ring-inset"
+      onclick={activate}
+      draggable={!selectable}
+      ondragstart={(e) => {
+        // Out of the window as a real file: drop it into Discord or a folder.
+        e.preventDefault()
+        dragOut(clip.path)
+      }}
+      aria-pressed={selectable ? selected : undefined}
+      aria-label="{selectable ? 'Select' : 'Open'} {clip.game} clip from {when(clip.created_ms)}"
+    ></button>
+
     {#if selectable}
       <span
-        class="absolute top-2 left-2 flex size-6 items-center justify-center rounded-full border-2 transition-colors duration-fast
+        class="pointer-events-none absolute top-2 left-2 flex size-6 items-center justify-center rounded-full border-2 transition-colors duration-fast
           {selected ? 'border-accent bg-accent text-on-accent' : 'border-white/70 bg-black/50 text-transparent'}"
         aria-hidden="true"
       >
@@ -161,10 +165,7 @@
         <button
           class="btn-scrim absolute top-2 left-2 transition-opacity duration-fast
             {clip.favorite ? 'text-accent' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'}"
-          onclick={(e) => {
-            e.stopPropagation()
-            onfavorite()
-          }}
+          onclick={onfavorite}
           title={clip.favorite ? 'Remove from favourites' : 'Add to favourites'}
           aria-label={clip.favorite ? 'Remove from favourites' : 'Add to favourites'}
           aria-pressed={clip.favorite}
@@ -175,10 +176,7 @@
       <div class="absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100">
         <button
           class="btn-scrim"
-          onclick={(e) => {
-            e.stopPropagation()
-            oncopy()
-          }}
+          onclick={oncopy}
           title="Copy"
           aria-label="Copy clip"
         >
@@ -186,10 +184,7 @@
         </button>
         <button
           class="btn-scrim"
-          onclick={(e) => {
-            e.stopPropagation()
-            onshare()
-          }}
+          onclick={onshare}
           title="Show in folder"
           aria-label="Show in folder"
         >
@@ -197,8 +192,7 @@
         </button>
         <button
           class="btn-scrim {armed ? 'bg-danger text-white hover:bg-danger' : ''}"
-          onclick={(e) => {
-            e.stopPropagation()
+          onclick={() => {
             if (armed) ondelete()
             else armed = true
           }}
