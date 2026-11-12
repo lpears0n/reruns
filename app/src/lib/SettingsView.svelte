@@ -19,7 +19,6 @@
     type Usage,
     type AudioLevel,
     onAudioLevel,
-    onUpdateProgress,
   } from './api'
   import { bytes } from './format'
   import HotkeyBinder from './HotkeyBinder.svelte'
@@ -47,6 +46,7 @@
     update: available = $bindable(null),
     onchange,
     onerror,
+    onupdate,
     onchoosescreen,
   }: {
     settings: Settings
@@ -59,6 +59,8 @@
     onchange: (s: Settings) => Promise<void>
     /** A setting didn't save. */
     onerror: (text: string) => void
+    /** Open the update prompt, which installs it. */
+    onupdate: () => void
     onchoosescreen: () => void
   } = $props()
 
@@ -152,7 +154,6 @@
   let support = $state<{ configured: boolean; version: string } | null>(null)
   let checking = $state(false)
   let checked = $state(false)
-  let installing = $state<number | null | undefined>(undefined)
   let updateError = $state<string | null>(null)
   $effect(() => {
     if (category === 'General' && !support) api.updateSupport().then((s) => (support = s))
@@ -168,22 +169,6 @@
       updateError = String(e)
     } finally {
       checking = false
-    }
-  }
-
-  async function install() {
-    updateError = null
-    installing = null
-    const stop = await onUpdateProgress((f) => (installing = f))
-    try {
-      // Restarts into the new version, or waits for the game to close.
-      const game = await api.installUpdate()
-      if (game) updateError = `Downloaded. Installs when ${game} closes.`
-    } catch (e) {
-      updateError = String(e)
-    } finally {
-      installing = undefined
-      stop()
     }
   }
 
@@ -379,22 +364,8 @@
         <h3 class="section-title px-1">Updates</h3>
         <div class="card divide-y divide-line">
           <Row title={support ? `Reruns ${support.version}` : 'Reruns'} description={updateText}>
-            {#if installing !== undefined}
-              <div class="flex items-center gap-3">
-                <div
-                  class="h-1.5 w-32 overflow-hidden rounded-full bg-line-strong"
-                  role="progressbar"
-                  aria-label="Downloading the update"
-                  aria-valuenow={installing === null ? undefined : Math.round(installing * 100)}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                >
-                  <div class="h-full rounded-full bg-accent transition-[width] duration-normal" style:width="{(installing ?? 0.1) * 100}%"></div>
-                </div>
-                <span class="text-secondary text-fg-2">Updating…</span>
-              </div>
-            {:else if available}
-              <button class="btn-primary h-9" onclick={install}>Update and restart</button>
+            {#if available}
+              <button class="btn-primary h-9" onclick={onupdate}>Update…</button>
             {:else}
               <button class="btn h-9" disabled={!support?.configured || checking} onclick={checkNow}>
                 {checking ? 'Checking…' : 'Check now'}
@@ -815,12 +786,12 @@
             />
           </Row>
           <Row
-            title="Protect starred clips"
-            description="Never remove clips you starred."
+            title="Protect favourite clips"
+            description="Never remove favourites."
             disabled={settings.storage_limit_gb == null}
           >
             <Toggle
-              label="Protect starred clips"
+              label="Protect favourite clips"
               disabled={settings.storage_limit_gb == null}
               checked={settings.protect_favorites}
               onchange={(protect_favorites) => update({ protect_favorites })}

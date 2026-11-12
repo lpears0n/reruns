@@ -452,11 +452,6 @@ fn play_cue(app: &AppHandle, cue: system::Cue) {
 }
 
 #[tauri::command]
-async fn save_screenshot(app: AppHandle, state: State<'_, AppState>) -> CmdResult<PathBuf> {
-    state.service.screenshot(save_dir(&app)).await
-}
-
-#[tauri::command]
 async fn delete_clip(state: State<'_, AppState>, path: PathBuf) -> CmdResult<()> {
     let use_trash = state.settings.lock().unwrap().use_trash;
     library::delete(&state.clips_dir(), &path, use_trash).map_err(|e| format!("{e:#}"))
@@ -1239,7 +1234,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             save_clip,
-            save_screenshot,
             export_plan,
             import_sound,
             preview_sound,

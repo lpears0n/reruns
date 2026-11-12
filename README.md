@@ -105,7 +105,7 @@ Known problems:
 - **X11 isn't supported.** There's no capture backend for it.
 - **Windows is tested on NVIDIA only.** Game detection, window capture and NVENC zero-copy recording work there; AMD AMF and Intel Quick Sync, and HDR window capture, haven't been run on real hardware. See [docs/WINDOWS.md](docs/WINDOWS.md).
 - **The Windows installer isn't code-signed yet**, so SmartScreen warns on first run.
-- **Storage limits are a soft cap.** Old clips get deleted after a save if you go over, and the Trash option is on by default so you can recover them. Starred and edited clips are kept unless you turn that off in Settings → Storage.
+- **Storage limits are a soft cap.** Old clips get deleted after a save if you go over, and the Trash option is on by default so you can recover them. Favourite and edited clips are kept unless you turn that off in Settings → Storage.
 
 What I'd do next, if I had more time: zero-copy capture for high frame rates (the current path copies every frame through system memory), the `ext-image-copy-capture` protocol for window capture on wlroots desktops, X11 support, and a proper package.
 

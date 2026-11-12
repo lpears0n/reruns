@@ -423,15 +423,15 @@ async function runScenario(scenario, browser) {
   await page.waitForTimeout(250) // let the switch finish moving before the shot
   assert.equal(await page.getByRole('switch', { name: 'Capture the window in HDR' }).getAttribute('aria-checked'), 'true', 'HDR window capture on')
   await shot('settings-recording-windows')
-  // Storage: starred clips are kept by the limit unless turned off.
+  // Storage: favourite clips are kept by the limit unless turned off.
   await page.getByRole('button', { name: 'Storage', exact: true }).click()
-  const starred = page.getByRole('switch', { name: 'Protect starred clips' })
-  assert.equal(await starred.getAttribute('aria-checked'), 'true', 'starred clips protected by default')
-  await starred.click()
+  const favourites = page.getByRole('switch', { name: 'Protect favourite clips' })
+  assert.equal(await favourites.getAttribute('aria-checked'), 'true', 'favourites protected by default')
+  await favourites.click()
   await page.waitForFunction(
-    () => document.querySelector('[role="switch"][aria-label="Protect starred clips"]').getAttribute('aria-checked') === 'false',
+    () => document.querySelector('[role="switch"][aria-label="Protect favourite clips"]').getAttribute('aria-checked') === 'false',
   )
-  await starred.click()
+  await favourites.click()
   // Capture failing mid-game: the header says so instead of "waiting".
   await page.evaluate(
     (s) => window[`_${window.__listeners['status-changed']}`]({ event: 'status-changed', id: 1, payload: s }),
@@ -499,10 +499,13 @@ async function runScenario(scenario, browser) {
   await page.getByText('Reruns 0.1.0').waitFor()
   await page.getByRole('button', { name: 'Check now' }).click()
   await page.getByText('Version 0.2.0 available.').waitFor()
-  assert.equal(await page.getByRole('button', { name: 'Update and restart' }).count(), 1, 'update button')
   assert.equal(await page.locator('header').getByRole('button', { name: 'Update to 0.2.0' }).count(), 1, 'top bar shows the update')
   await page.getByRole('heading', { name: 'Updates' }).scrollIntoViewIfNeeded()
   await shot('settings-updates')
+  // Settings installs through the same prompt as the top bar.
+  await page.getByRole('button', { name: 'Update…' }).click()
+  await page.getByRole('dialog', { name: 'Reruns 0.2.0' }).getByRole('button', { name: 'Update and restart' }).waitFor()
+  await page.getByRole('button', { name: 'Later' }).click()
   // Logs: the button asks the backend to open the folder; a failure shows
   // the message, which names the folder.
   await page.getByRole('button', { name: 'Open the log folder' }).click()
@@ -515,7 +518,7 @@ async function runScenario(scenario, browser) {
   await page.locator('main > div').evaluate((el) => el.scrollTo(0, el.scrollHeight))
   await shot('settings-logs')
   // An update found at start-up: the prompt opens once; "Later" leaves a
-  // pulsing icon in the header that opens it again.
+  // still icon in the header that opens it again.
   await page.evaluate(
     (u) => window[`_${window.__listeners['update-available']}`]({ event: 'update-available', id: 1, payload: u }),
     { version: '1.2.0', current_version: '1.1.0', notes: null, prompt: true },
@@ -651,7 +654,6 @@ async function uxScenario(browser) {
     const card = page.locator('.clip-grid > *').first()
     await card.hover()
     await card.getByRole('button', { name: 'Delete' }).click()
-    await card.getByRole('button', { name: 'Confirm delete' }).click()
     await page.waitForTimeout(150)
   }
   assert.equal(await cards(), before - 2, 'two clips deleted')

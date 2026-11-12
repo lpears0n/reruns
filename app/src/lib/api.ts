@@ -187,7 +187,6 @@ export const api = {
   hotkeyBackend: () => invoke<HotkeyBackend | null>('hotkey_backend'),
   status: () => invoke<Status>('get_status'),
   save: () => invoke<string>('save_clip'),
-  screenshot: () => invoke<string>('save_screenshot'),
   ignoreCurrentGame: () => invoke<Settings>('ignore_current_game'),
   /** Every clip and the games they belong to, from one scan. */
   library: () => invoke<{ clips: Clip[]; games: GameEntry[] }>('list_library'),

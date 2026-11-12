@@ -517,7 +517,7 @@
       <div class="h-full min-w-0 flex-1" data-tauri-drag-region></div>
       {#if newRelease}
         <button
-          class="update-badge btn-icon flex-none text-accent"
+          class="btn-icon flex-none text-accent"
           onclick={() => (updatePrompt = true)}
           title="Update to {newRelease.version}"
           aria-label="Update to {newRelease.version}"
@@ -573,7 +573,7 @@
             onfavorite={(c) => update(c, { favorite: !c.favorite })}
           />
         {:else if view === 'settings' && settings}
-          <SettingsView {settings} {usage} {caps} {status} bind:category bind:update={newRelease} onchange={changeSettings} onerror={(e) => notify(e, true)} onchoosescreen={chooseScreen} />
+          <SettingsView {settings} {usage} {caps} {status} bind:category bind:update={newRelease} onchange={changeSettings} onerror={(e) => notify(e, true)} onupdate={() => (updatePrompt = true)} onchoosescreen={chooseScreen} />
         {:else}
           <GamesView
             {games}
@@ -614,35 +614,3 @@
 {#if updatePrompt && newRelease}
   <UpdatePrompt info={newRelease} onclose={() => (updatePrompt = false)} />
 {/if}
-
-<style>
-  /* A slow breath, not a blink: a soft accent halo behind the icon swells
-     and fades, so it's noticeable without nagging and the button itself
-     stays still under the pointer. Turned off with reduced motion
-     (app.css). */
-  .update-badge {
-    position: relative;
-    isolation: isolate;
-  }
-  .update-badge::before {
-    content: '';
-    position: absolute;
-    inset: 3px;
-    z-index: -1;
-    border-radius: 999px;
-    background: var(--color-accent);
-    opacity: 0;
-    animation: breathe 2.4s ease-in-out infinite;
-  }
-  @keyframes breathe {
-    0%,
-    100% {
-      opacity: 0.06;
-      transform: scale(0.75);
-    }
-    50% {
-      opacity: 0.24;
-      transform: scale(1.1);
-    }
-  }
-</style>

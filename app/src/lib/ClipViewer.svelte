@@ -103,7 +103,6 @@
   let end = $state(0)
   /** Percent per audio track. */
   let levels = $state<number[]>([])
-  let armed = $state(false)
   let speed = $state(1)
   // Export shape: a 9:16 window (its position across the picture) for
   // TikTok, Shorts and Reels, and a slow-motion range inside the trim.
@@ -414,7 +413,7 @@
     ['Home / End', 'Jump to start or end'],
     ['[ / ]', 'Previous or next marked moment'],
     ['R', 'Repeat'],
-    ['S', 'Star (favourite)'],
+    ['S', 'Favourite'],
     ['N', 'Rename'],
     ['M', 'Mute'],
     ['F', 'Fullscreen'],
@@ -542,13 +541,7 @@
       </button>
       <button class="action" onclick={oncopy} title="Copy (Ctrl+C)">Copy</button>
       <button class="action" onclick={onshare}>Show in folder</button>
-      <button
-        class="action {armed ? 'text-danger' : ''}"
-        onclick={() => (armed ? ondelete() : (armed = true))}
-        onmouseleave={() => (armed = false)}
-      >
-        {armed ? 'Delete clip?' : 'Delete'}
-      </button>
+      <button class="action" onclick={ondelete}>Delete</button>
       <button class="btn-icon ml-1" onclick={() => (help = !help)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
         <CircleHelp size={18} />
       </button>

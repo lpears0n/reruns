@@ -37,9 +37,6 @@
 
   const title = $derived(clip.title ?? fallback)
 
-  // First click arms the delete button, second deletes.
-  let armed = $state(false)
-
   // Hovering scrubs the sprite sheet (ten frames, no decoding). With hover
   // previews on, a muted video takes over after the pointer rests a moment.
   let hovering = $state(false)
@@ -70,7 +67,6 @@
     clearTimeout(previewTimer)
     hovering = false
     previewing = false
-    armed = false
   }
 
   function activate() {
@@ -190,15 +186,7 @@
         >
           <FolderOpen size={16} />
         </button>
-        <button
-          class="btn-scrim {armed ? 'bg-danger text-white hover:bg-danger' : ''}"
-          onclick={() => {
-            if (armed) ondelete()
-            else armed = true
-          }}
-          title={armed ? 'Click again to delete' : 'Delete'}
-          aria-label={armed ? 'Confirm delete' : 'Delete'}
-        >
+        <button class="btn-scrim" onclick={ondelete} title="Delete" aria-label="Delete">
           <Trash2 size={16} />
         </button>
       </div>
