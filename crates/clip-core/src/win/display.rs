@@ -78,8 +78,11 @@ pub fn hdr_display(monitor: isize) -> Option<crate::HdrDisplay> {
                 if desc.ColorSpace != DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 {
                     return None;
                 }
+                // Unread is 0, not a guess: while the display is asleep
+                // Windows reports neither level, and the recorder asks
+                // again until it does (`tonemap` assumes 80 meanwhile).
                 return Some(crate::HdrDisplay {
-                    sdr_white_nits: sdr_white_nits(&desc.DeviceName).unwrap_or(80.0),
+                    sdr_white_nits: sdr_white_nits(&desc.DeviceName).unwrap_or(0.0),
                     peak_nits: desc.MaxLuminance.max(0.0),
                 });
             }

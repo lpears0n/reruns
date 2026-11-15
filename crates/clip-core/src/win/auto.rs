@@ -234,10 +234,14 @@ impl AutoRecorder {
                 self.restarts.reset();
                 return self.stop().await.map(|g| g.map(Change::Stopped));
             };
-            if now.hwnd == a.hwnd {
-                let Some(failure) = a.recorder.failure() else {
-                    return Ok(None);
-                };
+            if now.hwnd != a.hwnd {
+                // Same game, new window (a splash screen gave way to the
+                // game, or it recreated its window switching to fullscreen).
+                // The play session carries on; the replay buffer restarts.
+                tracing::info!(game = %now.game.name, "game window changed; following it");
+                let _ = self.stop().await;
+                self.resume = Some(now.game.clone());
+            } else if let Some(failure) = a.recorder.failure() {
                 // The capture died. Left alone, every clip would replay the
                 // last moments before the failure: restart it, backing off
                 // when it keeps failing (each attempt opens an encoder
@@ -265,13 +269,15 @@ impl AutoRecorder {
                     "capture failed, restarting it: {failure}"
                 );
                 return Ok(None);
+            } else if self.hdr_levels_arrived(now.monitor) {
+                // Our shader took the guessed level at start: start again
+                // with the real one (below), keeping the play session.
+                tracing::info!(game = %now.game.name, "restarting HDR window capture at the display's SDR white level");
+                let _ = self.stop().await;
+                self.resume = Some(now.game.clone());
+            } else {
+                return Ok(None);
             }
-            // Same game, new window (a splash screen gave way to the game,
-            // or it recreated its window switching to fullscreen). The play
-            // session carries on; the replay buffer restarts.
-            tracing::info!(game = %now.game.name, "game window changed; following it");
-            let _ = self.stop().await;
-            self.resume = Some(now.game.clone());
         }
 
         // Not recording. A game whose recording is being restarted that
@@ -325,6 +331,32 @@ impl AutoRecorder {
         self.restarts.failed(healthy_for)
     }
 
+    /// The recorded display's SDR white level couldn't be read when the
+    /// recording started (Windows reports neither it nor the peak while
+    /// the display is asleep) and can be now: keep it, so the status says
+    /// the real level. True when the capture tone-maps with our own shader,
+    /// which took the guess and has to restart; GStreamer's screen capture
+    /// reads the level again by itself when the display comes back.
+    fn hdr_levels_arrived(&mut self, monitor: isize) -> bool {
+        let Some(a) = self.active.as_mut() else {
+            return false;
+        };
+        if !a.hdr.is_some_and(|h| h.sdr_white_nits <= 0.0) {
+            return false;
+        }
+        let Some(h) = crate::win::display::hdr_display(monitor).filter(|h| h.sdr_white_nits > 0.0)
+        else {
+            return false;
+        };
+        tracing::info!(
+            sdr_white_nits = h.sdr_white_nits,
+            peak_nits = h.peak_nits,
+            "the display reports its HDR levels now"
+        );
+        a.hdr = Some(h);
+        a.hdr_window
+    }
+
     /// Count failures the encoder itself is named in. Twice in a row and it
     /// is set aside for the next encoder that passes the probe: a driver
     /// that refuses sessions mid-game would otherwise retry forever with
@@ -352,6 +384,11 @@ impl AutoRecorder {
         let mut cfg = self.cfg.clone();
         cfg.encoder = Some(self.resolve_encoder().await?);
         let hdr = crate::win::display::hdr_display(running.monitor);
+        if hdr.is_some_and(|h| h.sdr_white_nits <= 0.0) {
+            tracing::warn!(
+                "couldn't read the display's SDR white level (asleep?); assuming 80 nits until it answers"
+            );
+        }
         let window = Target {
             window: running.hwnd,
             cursor: cfg.cursor,
