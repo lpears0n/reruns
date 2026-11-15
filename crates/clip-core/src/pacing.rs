@@ -70,7 +70,7 @@ pub struct Totals {
 
 impl Totals {
     /// Share of the timeline that was a repeated or missing frame, in
-    /// percent. The budget is under 0.5 (docs/DESIGN.md §5).
+    /// percent. The budget is under 0.5 (docs/PERFORMANCE.md §5).
     pub fn judder_percent(&self) -> f64 {
         let slots = self.frames + self.missing;
         if slots == 0 {

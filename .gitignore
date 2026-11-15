@@ -5,3 +5,5 @@ dist/
 # GStreamer runtime collected for the Windows installer
 app/src-tauri/gst/**/*.dll
 app/src-tauri/release.conf.json
+# Real frames and art for local UI screenshots (tests/ui.cjs RERUNS_SHOT_FRAMES)
+app/tests/local-assets/

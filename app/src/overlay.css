@@ -6,16 +6,12 @@
 
    It follows docs/DESIGN.md like the app does, from the same tokens: the
    4 px grid, the app's type roles, one coloured element per card (the
-   recording dot or the accent glyph), one shadow, and motion under
+   recording dot), one shadow, and motion under
    200 ms that only fades and slides. It is over someone's game: it says
    one thing and gets out of the way. */
-@import '@fontsource-variable/inter';
-@import '@fontsource-variable/archivo/wdth.css';
 @import './tokens.css';
 
 :root {
-  /* Set from the user's Appearance choice (overlay.ts). */
-  --accent: var(--t-accent);
   color-scheme: dark;
 }
 
@@ -27,8 +23,7 @@ body {
   overflow: hidden;
   user-select: none;
   font-family: var(--t-font-sans);
-  font-weight: 460;
-  font-feature-settings: 'cv11', 'ss01';
+  font-weight: 400;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -70,17 +65,17 @@ body {
     transform 150ms ease-out;
 }
 
-/* The mark: what happened, at a glance. A recording dot for Ready, the
-   accent glyph for what was kept. It is the card's only colour. */
+/* The mark: what happened, at a glance. A recording dot for Ready (the
+   card's only colour), a glyph for what was kept. */
 .mark {
   display: grid;
   place-items: center;
   flex: none;
   width: 32px;
   height: 32px;
-  border-radius: var(--t-radius-card);
-  background: var(--t-line);
-  color: var(--accent);
+  border-radius: var(--t-radius-ctl);
+  background: var(--t-canvas);
+  color: var(--t-accent);
 }
 
 .rec {
@@ -88,7 +83,7 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--t-danger);
+  background: var(--t-signal-bad);
 }
 
 .popup[data-kind='ready'] .rec {
@@ -121,11 +116,9 @@ body {
 .title {
   overflow: hidden;
   font-family: var(--t-font-display);
-  font-stretch: 112%;
   font-size: var(--t-text-title);
   line-height: var(--t-text-title-line);
   font-weight: 600;
-  letter-spacing: -0.01em;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -139,21 +132,10 @@ body {
   text-overflow: ellipsis;
 }
 
-/* A key cap, as the app draws them. */
+/* The key to press, as plain type: the app draws no key caps either. */
 kbd {
-  display: inline-block;
-  min-width: 16px;
-  box-sizing: border-box;
-  margin: 0 2px;
-  padding: 0 4px;
-  border: 1px solid var(--t-line-strong);
-  border-radius: var(--t-radius-chip);
-  background: var(--t-line);
-  font-family: var(--t-font-sans);
-  font-size: var(--t-text-caption);
-  line-height: var(--t-text-caption-line);
-  font-weight: 500;
-  text-align: center;
+  font: inherit;
+  font-weight: 600;
   color: var(--t-fg);
 }
 

@@ -17,7 +17,6 @@
 </script>
 
 <script lang="ts">
-  import { Download } from '@lucide/svelte'
   import { noteLines } from './notes'
   import { api, onUpdateProgress, type UpdateInfo } from './api'
 
@@ -68,7 +67,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <dialog
   bind:this={dialog}
-  class="floating m-auto w-md text-fg backdrop:bg-black/60"
+  class="dialog-surface m-auto w-md text-fg backdrop:bg-black/60"
   aria-labelledby="update-title"
   onkeydown={(e) => e.stopPropagation()}
   oncancel={(e) => {
@@ -77,47 +76,42 @@
   }}
   onclick={(e) => e.target === dialog && close()}
 >
-  <div class="p-5">
-    <div class="flex items-center gap-3">
-      <span class="flex size-9 flex-none items-center justify-center rounded-full bg-accent/15 text-accent">
-        <Download size={18} />
-      </span>
-      <div class="min-w-0">
-        <div id="update-title" class="display-face text-title font-semibold">Reruns {info.version}</div>
-        <div class="text-secondary text-muted">You have {info.current_version}</div>
-      </div>
+  <div class="p-6">
+    <div class="flex items-baseline gap-3">
+      <div id="update-title" class="text-title font-semibold">Reruns {info.version}</div>
+      <div class="meta">You have {info.current_version}</div>
     </div>
 
     {#if progress !== undefined}
-      <div class="mt-5 h-1.5 overflow-hidden rounded-full bg-line-strong" role="progressbar" aria-label="Downloading" aria-valuenow={progress == null ? undefined : Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100}>
-        <div class="h-full rounded-full bg-accent transition-[width] duration-normal" style:width="{(progress ?? 0.1) * 100}%"></div>
+      <div class="mt-6 h-1.5 overflow-hidden rounded-[3px] bg-hover" role="progressbar" aria-label="Downloading" aria-valuenow={progress == null ? undefined : Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+        <div class="h-full bg-accent transition-[width] duration-normal" style:width="{(progress ?? 0.1) * 100}%"></div>
       </div>
-      <div class="mt-2 flex items-center justify-between text-secondary text-muted">
+      <div class="mt-3 flex items-center justify-between text-muted">
         <span>Downloading…</span>
-        <button class="btn" onclick={() => api.cancelUpdate()}>Cancel</button>
+        <button class="btn bg-hover" onclick={() => api.cancelUpdate()}>Cancel</button>
       </div>
     {:else if waitingFor}
-      <div class="mt-4 text-secondary text-fg-2">Downloaded. Installs when {waitingFor} closes.</div>
-      <div class="mt-5 flex justify-end gap-2">
+      <div class="mt-4 text-fg-2">Downloaded. Installs when {waitingFor} closes.</div>
+      <div class="mt-6 flex justify-end gap-2">
         <button class="btn-primary" onclick={onclose}>OK</button>
       </div>
     {:else}
       {#if notes.length}
-        <div class="mt-4 max-h-48 space-y-1 overflow-y-auto pr-1 text-secondary text-fg-2" aria-label="What's new">
+        <div class="mt-4 max-h-48 space-y-1 overflow-y-auto pr-1 text-fg-2" aria-label="What's new">
           {#each notes as line}
-            <div class={line.kind === 'heading' ? 'pt-1 font-semibold text-fg' : line.kind === 'bullet' ? 'pl-3' : ''}>
-              {#if line.kind === 'bullet'}<span class="-ml-3 inline-block w-3 text-muted">•</span>{/if}{#each line.parts as part}{#if part.bold}<span class="font-semibold text-fg">{part.text}</span>{:else}{part.text}{/if}{/each}
+            <div class={line.kind === 'heading' ? 'pt-1 font-semibold text-fg' : line.kind === 'bullet' ? 'pl-4' : ''}>
+              {#if line.kind === 'bullet'}<span class="-ml-4 inline-block w-3 text-muted">•</span>{/if}{#each line.parts as part}{#if part.bold}<span class="font-semibold text-fg">{part.text}</span>{:else}{part.text}{/if}{/each}
             </div>
           {/each}
         </div>
       {/if}
       {#if error}
-        <div class="mt-4 text-secondary text-danger">{error}</div>
+        <div class="mt-4 text-danger [overflow-wrap:anywhere]">{error}</div>
       {/if}
-      <div class="mt-5 flex justify-end gap-2">
-        <button class="btn mr-auto whitespace-nowrap" onclick={skip}>Skip this version</button>
+      <div class="mt-6 flex justify-end gap-2">
+        <button class="btn-text mr-auto h-10 text-body font-medium text-fg-2" onclick={skip}>Skip this version</button>
         <!-- svelte-ignore a11y_autofocus -->
-        <button class="btn" onclick={onclose} autofocus>Later</button>
+        <button class="btn bg-hover" onclick={onclose} autofocus>Later</button>
         <button class="btn-primary whitespace-nowrap" onclick={install}>Update and restart</button>
       </div>
     {/if}

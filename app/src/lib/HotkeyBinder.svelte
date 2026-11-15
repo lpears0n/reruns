@@ -31,9 +31,10 @@
 
 <svelte:window onkeydowncapture={onkeydown} />
 
-<div class="flex flex-col items-end gap-1.5">
+<div class="flex flex-col items-end gap-2">
   <button
-    class="field flex min-w-48 items-center justify-center gap-1 {listening ? 'border-accent text-accent' : ''}"
+    class="field flex min-w-44 items-center justify-center gap-1.5 tabular-nums {listening ? 'border-accent text-accent' : ''}"
+    title="Click, then press the keys"
     onclick={() => {
       listening = !listening
       error = null
@@ -41,15 +42,12 @@
     onblur={() => (listening = false)}
   >
     {#if listening}
-      <span class="text-secondary font-medium">Press keys…</span>
+      Press keys…
     {:else}
-      {#each value.split('+') as k, i (i)}
-        {#if i > 0}<span class="text-muted">+</span>{/if}
-        <kbd>{k}</kbd>
-      {/each}
+      {value ? value.split('+').join(' + ') : 'Not set'}
     {/if}
   </button>
   {#if error}
-    <span class="text-caption text-danger">{error}</span>
+    <span class="text-secondary text-danger">{error}</span>
   {/if}
 </div>

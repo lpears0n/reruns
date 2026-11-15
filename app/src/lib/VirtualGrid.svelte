@@ -1,44 +1,82 @@
 <!--
-  Windowed grid: only the rows near the viewport exist in the DOM. Row
-  height is measured from what is rendered, so cards with label chips don't
-  throw the maths off. Below `threshold` items it renders a plain grid.
+  The clip grid: sections, each a heading and rows of cards, as many to a
+  row as fit the width at `minWidth` each, so the grid always fills the
+  page. Above `threshold` items only the rows near the viewport are in the
+  DOM. Columns are worked out here rather than by CSS, so the rows are
+  known before anything is drawn; every card row is the same height,
+  measured from one.
 -->
-<script lang="ts" generics="T">
+<script lang="ts" generics="T, S extends { key: string; label?: string; items: T[] }">
   import type { Snippet } from 'svelte'
 
   let {
-    items,
+    sections,
     key,
+    minWidth,
     threshold = 120,
     overscan = 2,
+    heading,
     children,
   }: {
-    items: T[]
+    /** A section without a label gets no heading. */
+    sections: S[]
     key: (item: T) => string
+    /** Narrowest a card may get before the row loses a column. */
+    minWidth: number
     /** Item count above which windowing switches on. */
     threshold?: number
-    /** Extra rows rendered above and below the viewport. */
+    /** Extra card rows' worth of height kept above and below the viewport. */
     overscan?: number
+    heading: Snippet<[S]>
     children: Snippet<[T]>
   } = $props()
 
-  let grid: HTMLDivElement | undefined = $state()
-  let columns = $state(1)
-  let rowHeight = $state(260)
+  /** Between cards, across and down; `gap-x-5 pb-5` below. */
+  const GAP = 20
+  /** A heading row. Over the last row's gap it leaves 22 px under a card's
+   *  second line (40 under its title when that line is empty), and 12 px
+   *  from the heading to its cards. */
+  const HEAD = 36
+
+  let root: HTMLDivElement | undefined = $state()
+  let width = $state(1000)
+  let rowHeight = $state(200)
   let viewTop = $state(0)
   let viewHeight = $state(800)
   /** Offset of the grid's top from the scroll container's content top. */
-  let gridTop = $state(0)
+  let rootTop = $state(0)
 
-  const windowed = $derived(items.length > threshold)
-  const rows = $derived(Math.ceil(items.length / columns))
-  const firstRow = $derived(windowed ? Math.max(0, Math.floor((viewTop - gridTop) / rowHeight) - overscan) : 0)
-  const lastRow = $derived(
-    windowed ? Math.min(rows, Math.ceil((viewTop - gridTop + viewHeight) / rowHeight) + overscan) : rows,
-  )
-  const shown = $derived(items.slice(firstRow * columns, lastRow * columns))
-  const padTop = $derived(windowed ? firstRow * rowHeight : 0)
-  const padBottom = $derived(windowed ? Math.max(0, rows - lastRow) * rowHeight : 0)
+  const columns = $derived(Math.max(1, Math.floor((width + GAP) / (minWidth + GAP))))
+
+  type Row = { id: string; top: number } & ({ head: S } | { items: T[] })
+  const layout = $derived.by(() => {
+    const rows: Row[] = []
+    let top = 0
+    for (const s of sections) {
+      if (s.label) {
+        rows.push({ id: s.key, top, head: s })
+        top += HEAD
+      }
+      for (let i = 0; i < s.items.length; i += columns) {
+        rows.push({ id: `${s.key}/${i}`, top, items: s.items.slice(i, i + columns) })
+        top += rowHeight
+      }
+    }
+    return { rows, height: top }
+  })
+
+  const windowed = $derived(sections.reduce((n, s) => n + s.items.length, 0) > threshold)
+  const shown = $derived.by(() => {
+    const { rows, height } = layout
+    if (!windowed) return { rows, before: 0, after: 0 }
+    const from = viewTop - rootTop - overscan * rowHeight
+    const to = viewTop - rootTop + viewHeight + overscan * rowHeight
+    let a = 0
+    while (a < rows.length - 1 && rows[a + 1].top <= from) a++
+    let b = a
+    while (b < rows.length && rows[b].top < to) b++
+    return { rows: rows.slice(a, b), before: rows[a]?.top ?? 0, after: height - (rows[b]?.top ?? height) }
+  })
 
   function scrollParent(el: HTMLElement): HTMLElement {
     let p = el.parentElement
@@ -51,32 +89,20 @@
   }
 
   function measure(scroller: HTMLElement) {
-    if (!grid) return
+    if (!root) return
     viewTop = scroller.scrollTop
     viewHeight = scroller.clientHeight
-    // The grid's border box; its padding (the spacers) lies inside it.
-    gridTop = grid.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
-    const style = getComputedStyle(grid)
-    const cols = style.gridTemplateColumns.split(' ').filter((c) => c !== '0px').length
-    if (cols > 0) columns = cols
-    // Row pitch from the rendered cards themselves, never from the grid's
-    // own height, which includes the spacers and would feed back on itself.
-    const cards = grid.children
-    if (cards.length > columns) {
-      const first = cards[0].getBoundingClientRect().top
-      const lastRowStart = cards[Math.floor((cards.length - 1) / columns) * columns].getBoundingClientRect().top
-      const renderedRows = Math.ceil(cards.length / columns)
-      const h = (lastRowStart - first) / (renderedRows - 1)
-      if (h > 40 && Math.abs(h - rowHeight) > 1) rowHeight = h
-    } else if (cards.length > 0) {
-      const h = cards[0].getBoundingClientRect().height + (parseFloat(style.rowGap) || 0)
-      if (h > 40 && Math.abs(h - rowHeight) > 1) rowHeight = h
-    }
+    rootTop = root.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+    width = root.clientWidth
+    // One row's own height, never the grid's, which includes the spacers
+    // and would feed back on itself.
+    const h = root.querySelector<HTMLElement>('.clip-grid')?.offsetHeight ?? 0
+    if (h > 40 && Math.abs(h - rowHeight) > 1) rowHeight = h
   }
 
   $effect(() => {
-    if (!grid) return
-    const scroller = scrollParent(grid)
+    if (!root) return
+    const scroller = scrollParent(root)
     let raf = 0
     const onScroll = () => {
       if (raf) return
@@ -87,7 +113,7 @@
     }
     scroller.addEventListener('scroll', onScroll, { passive: true })
     const ro = new ResizeObserver(() => measure(scroller))
-    ro.observe(grid)
+    ro.observe(root)
     ro.observe(scroller)
     measure(scroller)
     return () => {
@@ -98,8 +124,17 @@
   })
 </script>
 
-<div bind:this={grid} class="clip-grid grid gap-x-4 gap-y-5" style:padding-top="{padTop}px" style:padding-bottom="{padBottom}px">
-  {#each shown as item (key(item))}
-    {@render children(item)}
+<div bind:this={root} style:padding-top="{shown.before}px" style:padding-bottom="{shown.after}px">
+  {#each shown.rows as row (row.id)}
+    {#if 'head' in row}
+      <div class="flex items-end gap-3 pb-3" style:height="{HEAD}px">{@render heading(row.head)}</div>
+    {:else}
+      <!-- The bottom padding is the gap to the next row, so a row's height is its pitch. -->
+      <div class="clip-grid grid gap-x-5 pb-5" style:grid-template-columns="repeat({columns}, minmax(0, 1fr))">
+        {#each row.items as item (key(item))}
+          {@render children(item)}
+        {/each}
+      </div>
+    {/if}
   {/each}
 </div>

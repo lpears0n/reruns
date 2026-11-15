@@ -162,7 +162,10 @@ impl MediaServer {
 }
 
 async fn respond(sock: &mut TcpStream, status: &str, headers: &[(&str, &str)]) -> Result<()> {
-    let mut out = format!("HTTP/1.1 {status}\r\nConnection: close\r\n");
+    // Any origin may read: the studio fetches a clip to draw its waveform,
+    // and the token in the path is what keeps other pages out.
+    let mut out =
+        format!("HTTP/1.1 {status}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n");
     for (k, v) in headers {
         out.push_str(&format!("{k}: {v}\r\n"));
     }

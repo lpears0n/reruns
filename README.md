@@ -92,7 +92,7 @@ The whole thing is a Cargo workspace: `crates/clip-core` has the capture and enc
 
 It works, but I've mostly tested it on my own machines: Windows and KDE Plasma 6 on Wayland, both with an NVIDIA card.
 
-There's a design and performance guide in [docs/DESIGN.md](docs/DESIGN.md) and a roadmap with the research behind it in [docs/ROADMAP.md](docs/ROADMAP.md):
+The design system is in [docs/DESIGN.md](docs/DESIGN.md), the performance rules and budgets in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), and a roadmap with the research behind it in [docs/ROADMAP.md](docs/ROADMAP.md):
 what's planned for the library and editor, how a Windows port would work
 (GStreamer's Windows Graphics Capture and WASAPI elements, so the ring
 buffer and trimmer carry over), and packaging. CI builds and lints every

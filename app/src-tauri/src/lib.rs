@@ -954,7 +954,12 @@ fn point_gstreamer_at_bundled_plugins() {
         return;
     };
     let plugins = exe.with_file_name("gst-plugins");
-    if plugins.is_dir() {
+    // A debug build copies the folder too, holding only `.keep`; pointing
+    // GStreamer at that leaves it with no plugins, so no encoder.
+    let bundled = std::fs::read_dir(&plugins).is_ok_and(|mut dir| {
+        dir.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "dll")))
+    });
+    if bundled {
         // SAFETY: called on the main thread before any other thread exists.
         unsafe {
             std::env::set_var("GST_PLUGIN_PATH", &plugins);

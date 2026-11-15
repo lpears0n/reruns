@@ -1,6 +1,8 @@
 <!--
-  Minimize / maximize / close for a window without the system frame
-  (Windows, where the header is the title bar). Renders nothing when the
+  The window's own strip, for a window without the system frame (Windows):
+  32 px across the top that drags the window (double-click maximizes) and
+  ends in minimize / maximize / close. It holds nothing of the app's, so
+  window chrome and content never share a bar. Renders nothing when the
   window keeps its own decorations (Linux), so the frame is never doubled.
   Close goes through the normal close request: hide to tray or quit, as set.
 -->
@@ -8,7 +10,9 @@
   import { getCurrentWindow } from '@tauri-apps/api/window'
 
   const win = getCurrentWindow()
-  let framed = $state(true)
+  // What it was last time, so the strip is there from the first paint.
+  const KEY = 'reruns/framed'
+  let framed = $state(localStorage.getItem(KEY) !== 'false')
   let maximized = $state(false)
 
   $effect(() => {
@@ -17,6 +21,7 @@
     ;(async () => {
       try {
         framed = Boolean(await win.isDecorated())
+        localStorage.setItem(KEY, String(framed))
         if (framed || !alive) return
         maximized = Boolean(await win.isMaximized())
         unlisten = await win.onResized(async () => {
@@ -34,7 +39,9 @@
 </script>
 
 {#if !framed}
-  <div class="-mr-4 ml-1 flex h-full flex-none self-stretch" role="group" aria-label="Window">
+  <div class="flex h-chrome flex-none bg-chrome" data-tauri-drag-region>
+  <div class="flex-1" data-tauri-drag-region></div>
+  <div class="flex flex-none" role="group" aria-label="Window">
     <button class="caption" onclick={() => win.minimize()} aria-label="Minimize" title="Minimize">
       <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor" /></svg>
     </button>
@@ -56,6 +63,7 @@
       <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" /></svg>
     </button>
   </div>
+  </div>
 {/if}
 
 <style>
@@ -69,11 +77,11 @@
     transition: background-color var(--duration-fast), color var(--duration-fast);
   }
   .caption:hover {
-    background: var(--color-raised);
+    background: var(--color-hover);
     color: var(--color-fg);
   }
   .caption:active {
-    background: var(--color-overlay);
+    background: var(--color-raised);
   }
   .caption-close:hover {
     background: #c42b1c;

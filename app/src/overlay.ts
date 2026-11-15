@@ -4,7 +4,6 @@
 
 import { emit, listen } from '@tauri-apps/api/event'
 import './overlay.css'
-import { ACCENTS, type Accent } from './lib/accents'
 
 interface Popup {
   kind: 'ready' | 'saved' | 'screenshot' | 'marked'
@@ -35,18 +34,14 @@ function fit() {
 fit()
 window.addEventListener('resize', fit)
 
-/** The user's accent and motion preference, from the main window's storage. */
+/** The user's motion preference, from the main window's storage. */
 function applyPrefs() {
-  let accent: Accent = 'orange'
   let reduceMotion = false
   try {
-    const p = JSON.parse(localStorage.getItem('reruns/prefs') ?? '{}')
-    if (p.accent in ACCENTS) accent = p.accent
-    reduceMotion = !!p.reduceMotion
+    reduceMotion = !!JSON.parse(localStorage.getItem('reruns/prefs') ?? '{}').reduceMotion
   } catch {
     // Storage unavailable: defaults.
   }
-  document.documentElement.style.setProperty('--accent', ACCENTS[accent].css)
   document.documentElement.classList.toggle('reduce-motion', reduceMotion)
 }
 

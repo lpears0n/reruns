@@ -1,53 +1,46 @@
-@import '@fontsource-variable/inter';
-@import '@fontsource-variable/archivo/wdth.css';
 @import 'tailwindcss';
 @import './tokens.css';
 
 /*
   Design tokens, mapped into Tailwind from tokens.css (shared with the
-  in-game popup). Everything in the UI derives from these, so a change there
-  moves the whole app. See docs/DESIGN.md.
-
-  Surfaces are steps of lightness on one base tint (OKLCH keeps the steps
-  perceptually even). Text is white at fixed opacities. The accent is set
-  by the Appearance settings (prefs.svelte.ts) on <html>.
+  in-game popup). Everything in the UI derives from these. See
+  docs/DESIGN.md.
 */
 @theme {
   --font-sans: var(--t-font-sans);
-  /* Headings and numbers: semi-expanded for a sportier read. */
   --font-display: var(--t-font-display);
 
-  /* Surfaces, darkest to lightest. Overlay is for things that float. */
   --color-canvas: var(--t-canvas);
-  --color-panel: var(--t-panel);
+  --color-chrome: var(--t-chrome);
   --color-raised: var(--t-raised);
-  --color-overlay: var(--t-overlay);
+  --color-hover: var(--t-hover);
 
-  /* Hairlines. */
   --color-line: var(--t-line);
   --color-line-strong: var(--t-line-strong);
 
-  /* Text. */
   --color-fg: var(--t-fg);
   --color-fg-2: var(--t-fg-2);
   --color-muted: var(--t-muted);
+  --color-faint: var(--t-faint);
 
-  /* Accent is user-chosen; this is the default (orange). */
   --color-accent: var(--t-accent);
+  --color-accent-hover: var(--t-accent-hover);
   --color-on-accent: var(--t-on-accent);
   --color-danger: var(--t-danger);
   --color-ok: var(--t-ok);
+  --color-warn: var(--t-warn);
+  --color-signal-ok: var(--t-signal-ok);
+  --color-signal-bad: var(--t-signal-bad);
 
-  /* Radii encode nesting: surface > card > control > chip. */
   --radius-chip: var(--t-radius-chip);
   --radius-ctl: var(--t-radius-ctl);
-  --radius-card: var(--t-radius-card);
+  --radius-frame: var(--t-radius-frame);
   --radius-surface: var(--t-radius-surface);
 
-  /* One shadow, for floating overlays only. */
-  --shadow-overlay: var(--t-shadow-overlay);
+  --shadow-pop: var(--t-shadow-pop);
+  --ease-out: var(--t-ease-out);
 
-  /* Type scale: six roles. */
+  /* Type scale: five roles. The app is set in `body`. */
   --text-caption: var(--t-text-caption);
   --text-caption--line-height: var(--t-text-caption-line);
   --text-secondary: var(--t-text-secondary);
@@ -56,21 +49,22 @@
   --text-body--line-height: 20px;
   --text-title: var(--t-text-title);
   --text-title--line-height: var(--t-text-title-line);
+  --text-heading: 18px;
+  --text-heading--line-height: 24px;
   --text-page: 24px;
-  --text-page--line-height: 28px;
-  --text-display: 32px;
-  --text-display--line-height: 36px;
+  --text-page--line-height: 32px;
 
-  /* Durations: nothing in the library is slower than fast. */
   --duration-fast: var(--t-duration-fast);
   --duration-normal: var(--t-duration-normal);
 
-  /* Layout. */
-  --spacing-sidebar: 208px;
-  --container-library: 1280px;
-  --container-settings: 896px;
-  --height-hero: clamp(220px, 36vh, 380px);
-  --height-banner: clamp(150px, 22vh, 220px);
+  /* Layout: navigation open and collapsed, the window's own strip, the
+     capture strip under a page, a settings page's column. */
+  --container-settings: 680px;
+  --container-viewer: 1080px;
+  --spacing-nav: 216px;
+  --spacing-nav-collapsed: 72px;
+  --spacing-chrome: 32px;
+  --spacing-strip: 44px;
 }
 
 @layer base {
@@ -84,9 +78,13 @@
   body {
     @apply bg-canvas font-sans text-body text-fg antialiased select-none;
     color-scheme: dark;
-    /* Inter looks crispest on dark between regular and medium. */
-    font-weight: 460;
-    font-feature-settings: 'cv11', 'ss01';
+    font-weight: 400;
+    caret-color: var(--color-accent);
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-accent) 38%, var(--color-canvas));
+    color: var(--color-fg);
   }
 
   button:not(:disabled) {
@@ -103,45 +101,20 @@
     outline-offset: 2px;
   }
 
-  input:focus-visible,
-  select:focus-visible {
-    outline-offset: 0;
-  }
-
   /* Native selects, restyled to match the controls. */
   select {
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23888b94' stroke-width='2' stroke-linecap='round' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23a9afb6' stroke-width='2' stroke-linecap='round' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 10px center;
-    padding-right: 30px !important;
+    padding-right: 32px !important;
   }
 
-  /* Range: accent fill up to the thumb via --fill (0–100%). */
-  input[type='range'] {
-    appearance: none;
-    height: 4px;
-    border-radius: 2px;
-    background: linear-gradient(
-      to right,
-      var(--color-accent) var(--fill, 50%),
-      var(--color-line-strong) var(--fill, 50%)
-    );
-    outline: none;
-  }
-
-  input[type='range']::-webkit-slider-thumb {
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #fff;
-    border: 0;
-    cursor: pointer;
-  }
-
+  /* A key is named in plain type, never drawn as a key cap. */
   kbd {
-    @apply inline-flex h-5 min-w-5 items-center justify-center rounded-chip border border-line-strong bg-raised px-1.5 font-sans text-caption font-medium text-fg-2;
+    font: inherit;
+    font-weight: 600;
+    color: var(--color-fg);
   }
 
   /* Reduced motion (system preference or the Appearance toggle): keep
@@ -166,93 +139,163 @@
   transition-duration: var(--duration-normal);
 }
 
-/* Controls. Hover is one surface step up, never a translucent white. */
+/* What every pressable thing shares: colour answers the pointer at once. */
+@utility press {
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    filter var(--duration-fast) var(--ease-out);
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+}
+
+/* A secondary action: no fill, a hairline edge that says "this is a button".
+   Takes a faint surface under the pointer, a little more when pressed. */
 @utility btn {
-  @apply inline-flex h-9 items-center justify-center gap-2 rounded-ctl border border-line bg-raised px-3 text-body font-medium text-fg transition-colors duration-fast hover:border-line-strong hover:bg-overlay disabled:cursor-default disabled:opacity-40;
+  @apply press inline-flex h-9 flex-none items-center justify-center gap-2 rounded-ctl border border-line-strong px-3.5 text-body font-medium whitespace-nowrap text-fg hover:not-disabled:border-faint hover:not-disabled:bg-white/5 active:not-disabled:bg-white/8;
 }
 
+/* The same where 36 px would crowd: settings rows, the capture strip. */
+@utility btn-sm {
+  @apply press inline-flex h-8 flex-none items-center justify-center gap-1.5 rounded-ctl border border-line-strong px-3 text-secondary font-medium whitespace-nowrap text-fg hover:not-disabled:border-faint hover:not-disabled:bg-white/5 active:not-disabled:bg-white/8;
+}
+
+/* The main action of a view: the accent, with near-black text. One per view.
+   Pressed, it darkens a step: colour only, nothing bounces. */
 @utility btn-primary {
-  @apply inline-flex h-9 items-center justify-center gap-2 rounded-ctl bg-accent px-4 text-body font-semibold text-on-accent transition-[filter] duration-fast hover:brightness-110 disabled:cursor-default disabled:bg-raised disabled:text-muted disabled:ring-1 disabled:ring-line disabled:ring-inset disabled:hover:brightness-100;
+  @apply press inline-flex h-9 flex-none items-center justify-center gap-2 rounded-ctl bg-accent px-4 text-body font-medium whitespace-nowrap text-on-accent hover:not-disabled:bg-accent-hover active:not-disabled:brightness-90;
 }
 
+@utility btn-danger {
+  @apply press inline-flex h-8 flex-none items-center justify-center gap-1.5 rounded-ctl bg-danger px-3 text-secondary font-medium whitespace-nowrap text-on-accent hover:not-disabled:brightness-110;
+}
+
+/* A bare icon in a 36 px hit area: no surface until the pointer or focus. */
 @utility btn-icon {
-  @apply inline-flex size-8 items-center justify-center rounded-ctl text-fg-2 transition-colors duration-fast hover:bg-overlay hover:text-fg;
+  @apply press inline-flex size-9 flex-none items-center justify-center rounded-ctl text-fg-2 hover:not-disabled:bg-white/6 hover:not-disabled:text-fg active:not-disabled:bg-white/10;
 }
 
-/* Icon button sitting on top of an image: solid scrim, never blur. */
-@utility btn-scrim {
-  @apply inline-flex size-8 items-center justify-center rounded-ctl bg-black/60 text-fg transition-colors duration-fast hover:bg-black/80;
+@utility btn-icon-sm {
+  @apply press inline-flex size-8 flex-none items-center justify-center rounded-ctl text-fg-2 hover:not-disabled:bg-white/6 hover:not-disabled:text-fg active:not-disabled:bg-white/10;
 }
 
+/* A text button with no surface: Reset, Undo, Cancel beside a sentence. */
+@utility btn-text {
+  @apply press inline-flex h-8 flex-none items-center rounded-ctl px-2 text-secondary font-medium whitespace-nowrap text-fg hover:not-disabled:bg-white/6;
+}
+
+/* Somewhere to put something. */
 @utility field {
-  @apply h-9 rounded-ctl border border-line bg-canvas px-3 text-body text-fg outline-none transition-colors duration-fast hover:border-line-strong focus:border-accent;
+  @apply h-9 rounded-ctl border border-line-strong bg-canvas px-3 text-body text-fg outline-none transition-colors duration-fast;
+  &:hover:not(:disabled) {
+    border-color: var(--color-faint);
+  }
+  &:focus,
+  &:focus-within {
+    border-color: var(--color-accent);
+    outline: none;
+  }
+  &:disabled {
+    opacity: 0.45;
+  }
 }
 
-@utility card {
-  @apply rounded-card border border-line bg-panel;
+/* The top of a page: its title on the left, its tools on the right. */
+@utility page-header {
+  @apply flex h-20 flex-none items-center gap-3 px-8;
 }
 
-/* Floating surface: popovers, toasts, sheets. The one place a shadow lives. */
-@utility floating {
-  @apply rounded-card border border-line-strong bg-overlay shadow-overlay;
-}
-
-@utility display-face {
-  font-family: var(--font-display);
-  font-stretch: 112%;
-  letter-spacing: -0.01em;
-}
-
-@utility section-title {
-  @apply display-face text-title font-semibold text-fg;
-}
-
-/* Small label tag on cards and in the viewer. */
-@utility chip {
-  @apply inline-flex h-5 max-w-36 items-center truncate rounded-chip border border-line bg-raised px-2 text-caption font-medium text-fg-2;
-}
-
-/* Clip grids: as many cards as fit at the chosen density (Appearance settings). */
-@utility clip-grid {
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min, 300px), 1fr));
-}
-
-/* Offscreen cards skip layout and paint; the size hint keeps the scrollbar stable. */
-@utility cv-auto {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 240px;
-}
-
-/* Placeholder for a thumbnail that hasn't been made yet. */
-@utility thumb-empty {
-  background: linear-gradient(135deg, var(--color-raised), var(--color-panel));
-}
-
-/* Skeleton shimmer: slow, left to right (perceived as shorter than a pulse). */
-@utility skeleton {
-  @apply relative overflow-hidden rounded-card bg-panel;
-  &::after {
+/* A recessed track with one key that slides to the chosen option: set
+   --n (options) and --i (chosen) on the track; cells are equal columns. */
+@utility seg {
+  @apply relative grid auto-cols-fr grid-flow-col rounded-ctl bg-chrome p-0.5;
+  box-shadow: inset 0 0 0 1px var(--color-line-strong);
+  &::before {
     content: '';
     position: absolute;
-    inset: 0;
-    transform: translateX(-100%);
-    background: linear-gradient(90deg, transparent, var(--color-raised), transparent);
-    animation: shimmer 1.6s ease-in-out infinite;
+    top: 3px;
+    bottom: 3px;
+    left: 3px;
+    width: calc((100% - 6px) / var(--n));
+    border-radius: 4px;
+    background: var(--color-hover);
+    translate: calc(var(--i) * 100%) 0;
+    transition: translate var(--duration-normal) var(--ease-out);
+  }
+  & > * {
+    position: relative;
   }
 }
 
-@keyframes shimmer {
-  to {
-    transform: translateX(100%);
+/* A picture's frame: a clip's thumbnail, the player. A plain surface until
+   its real frame covers it; never a drawn stand-in. */
+@utility frame {
+  @apply relative overflow-hidden rounded-frame bg-chrome;
+}
+
+/* What leaves the page: a menu, a popover, a dialog. Opaque, one shadow. */
+@utility pop-surface {
+  @apply rounded-frame bg-raised shadow-pop;
+}
+
+@utility dialog-surface {
+  @apply rounded-surface bg-raised shadow-pop;
+}
+
+/* A row in a menu. */
+@utility menu-item {
+  @apply flex h-8 w-full flex-none items-center gap-2.5 rounded-chip px-2.5 text-left text-body whitespace-nowrap text-fg transition-colors duration-fast;
+  &:hover:not(:disabled),
+  &:focus-visible {
+    background: var(--color-hover);
+    outline: none;
   }
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+}
+
+/* The key that does the same, at the end of a menu row: plain type. */
+@utility menu-key {
+  @apply ml-auto pl-6 text-caption text-muted;
+}
+
+@utility menu-rule {
+  @apply mx-1 my-1.5 h-px flex-none bg-line-strong;
+}
+
+/* What a thing is, in small type: never a coloured badge. */
+@utility meta {
+  @apply text-caption text-muted tabular-nums;
+}
+
+/* A small group label (the navigation's "Games"): sentence case, never capitals. */
+@utility section-title {
+  @apply text-caption font-semibold text-muted;
+}
+
+/* A still block where something is loading. */
+@utility skeleton {
+  @apply rounded-chip bg-chrome;
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
+  width: 12px;
+  height: 12px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-raised);
-  border-radius: 5px;
-  border: 3px solid var(--color-canvas);
+  background: var(--color-line-strong);
+  border-radius: 6px;
+  /* Inset from the edge on any surface. */
+  border: 4px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-faint);
 }

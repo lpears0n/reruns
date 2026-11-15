@@ -13,7 +13,7 @@
 
 {#if enabled}
   <aside
-    class="flex max-w-full flex-none items-center justify-center rounded-card border border-dashed border-line-strong bg-panel text-secondary text-muted"
+    class="flex max-w-full flex-none items-center justify-center rounded-ctl border border-line bg-chrome text-caption text-muted"
     style:width="{width}px"
     style:height="{height}px"
     aria-label="Advertisement"

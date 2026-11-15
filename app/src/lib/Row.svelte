@@ -1,4 +1,6 @@
-<!-- A settings row: title and description on the left, control on the right. -->
+<!-- A settings row: what it is on the left in regular weight, its control
+     on the right. Rows sit together by spacing; no rule under each. A
+     disabled row greys its words; the control shows its own disabled state. -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
 
@@ -10,11 +12,11 @@
   }: { title: string; description?: string; disabled?: boolean; children?: Snippet } = $props()
 </script>
 
-<div class="flex min-h-15 items-center gap-6 px-4 py-3 {disabled ? 'opacity-45' : ''}">
-  <div class="min-w-0 flex-1">
-    <div class="text-body font-medium text-fg">{title}</div>
+<div class="flex min-h-12 items-center gap-6 py-2">
+  <div class="min-w-0 flex-1 {disabled ? 'text-muted' : ''}">
+    <div class={disabled ? '' : 'text-fg'}>{title}</div>
     {#if description}
-      <div class="mt-0.5 text-secondary text-muted">{description}</div>
+      <div class="text-secondary [overflow-wrap:anywhere] {disabled ? '' : 'text-fg-2'}">{description}</div>
     {/if}
   </div>
   {#if children}

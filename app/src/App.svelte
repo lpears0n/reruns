@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { CircleAlert, Download, PanelLeft } from '@lucide/svelte'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import { open as openDialog } from '@tauri-apps/plugin-dialog'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import AdSlot from './lib/AdSlot.svelte'
   import {
     api,
@@ -30,29 +29,35 @@
   import { readLibraryCache, writeLibraryCache } from './lib/cache'
   import ClipsView from './lib/ClipsView.svelte'
   import { coalesce } from './lib/coalesce'
-  import ClipViewer from './lib/ClipViewer.svelte'
-  import GamesView from './lib/GamesView.svelte'
-  import GameView from './lib/GameView.svelte'
+  import ClipStudio, { type Edit } from './lib/ClipStudio.svelte'
   import { applyPrefs, prefs, setPrefs } from './lib/prefs.svelte'
   import SettingsView, { type Category } from './lib/SettingsView.svelte'
-  import Sidebar, { type NavId } from './lib/Sidebar.svelte'
+  import Rail, { type Scope } from './lib/Rail.svelte'
   import StateMessage from './lib/StateMessage.svelte'
-  import StatusBar from './lib/StatusBar.svelte'
+  import StatusBar, { type Notice } from './lib/StatusBar.svelte'
   import ScreenshotViewer from './lib/ScreenshotViewer.svelte'
-  import Toast, { type ToastData } from './lib/Toast.svelte'
   import UpdatePrompt, { skippedUpdate } from './lib/UpdatePrompt.svelte'
   import WindowControls from './lib/WindowControls.svelte'
 
-  type View = 'games' | 'game' | 'clips' | 'settings'
+  type View = 'library' | 'settings'
+  /** The number keys switch between the pages. */
+  const KEYS: Record<string, View> = { '1': 'library', '2': 'settings' }
   const VIDEO = /\.(mp4|mkv|mov|webm)$/i
   /** How long a deleted clip can be brought back from the toast. */
   const UNDO_MS = 6000
 
-  let view = $state<View>('games')
-  /** The game page being shown, by name (entries are refreshed often). */
+  let view = $state<View>('library')
+  /** What the rail has the library list. */
+  let scope = $state<Scope>('all')
+  /** The game listed when the scope is 'game', by name (entries are refreshed often). */
   let gameName = $state<string | null>(null)
-  /** Clip open in the viewer, layered over the current view. */
+  /** Clip open in the studio, in place of the workspace. */
   let viewing = $state<Clip | null>(null)
+  /** The clips as the library listed them when one was opened: Left and
+   *  Right in the studio step through these. */
+  let queue = $state.raw<string[]>([])
+  /** The library page, while it shows: it owns the selection the status strip draws. */
+  let library = $state<ReturnType<typeof ClipsView>>()
   let category = $state<Category>('General')
 
   let status = $state<Status | null>(null)
@@ -68,23 +73,6 @@
   }
   let usage = $state<Usage | null>(null)
   let caps = $state<Capabilities | null>(null)
-  let innerWidth = $state(1280)
-
-  // The sidebar folds to icons by itself where room matters more than
-  // labels: a narrow window, Settings (which has its own section list) and
-  // the clip viewer. There the toggle opens it for the moment (`peek`);
-  // everywhere else it follows the saved choice (Ctrl+B).
-  const autoCollapse = $derived(innerWidth < 1100 || view === 'settings' || viewing !== null)
-  let peek = $state(false)
-  $effect(() => {
-    void autoCollapse
-    peek = false
-  })
-  const sidebarCollapsed = $derived(autoCollapse ? !peek : prefs.sidebarCollapsed)
-  function toggleSidebar() {
-    if (autoCollapse) peek = !peek
-    else setPrefs({ sidebarCollapsed: !prefs.sidebarCollapsed })
-  }
   // Raw: replaced wholesale on every refresh; a deep proxy over thousands of
   // clips is slow and unnecessary.
   let allClips = $state.raw<Clip[]>([])
@@ -98,12 +86,21 @@
   let now = $state(Date.now())
   /** Why the library couldn't be read, shown in place of the views. */
   let libraryError = $state<string | null>(null)
-  let rendering = $state(false)
+  /** What the viewer is rendering for: Copy clip, or Save clip. */
+  let busy = $state<'copy' | 'save' | null>(null)
   let renderProgress = $state(0)
+  /** Copy clip is under way (a copy as it is sets no `busy`): one at a time. */
+  let copying = false
+  /** Copy clip just worked: its button says so for a moment. */
+  let copied = $state(false)
+  let copiedTimer: ReturnType<typeof setTimeout>
+  /** Too narrow for the open navigation: it shows collapsed, whatever is saved. */
+  const NARROW = '(max-width: 1079px)'
+  let narrow = $state(matchMedia(NARROW).matches)
   let dragging = $state(false)
   let saving = $state(false)
   let flash = $state(false)
-  let toast = $state<ToastData | null>(null)
+  let toast = $state<Notice | null>(null)
   let toastTimer: ReturnType<typeof setTimeout>
 
   // Deletes are deferred so they can be undone; the clips vanish from the
@@ -115,19 +112,33 @@
   const clips = $derived(hidden.size ? allClips.filter((c) => !hidden.has(c.path)) : allClips)
   const shots = $derived(hidden.size ? screenshots.filter((s) => !hidden.has(s.path)) : screenshots)
 
-  const game = $derived(games.find((g) => g.name === gameName) ?? null)
+  const game = $derived(scope === 'game' ? (games.find((g) => g.name === gameName) ?? null) : null)
   const hotkey = $derived(settings?.hotkey ?? 'F8')
-  const nav = $derived<NavId>(view === 'game' ? 'games' : view)
-  const title = $derived(
-    view === 'games' ? 'Games' : view === 'game' ? (game?.name ?? 'Games') : view === 'clips' ? 'All clips' : 'Settings',
-  )
+  /** A clip or screenshot is open: the workspace behind is out of sight and reach. */
+  const covered = $derived(!!viewing || !!shot)
+  /** The studio's clips either side: what is still there of the list it was opened from. */
+  const order = $derived(queue.filter((p) => !hidden.has(p)))
+  const position = $derived.by(() => {
+    const index = viewing ? order.indexOf(viewing.path) : -1
+    return index < 0 ? null : { index, total: order.length }
+  })
 
+  function step(dir: 1 | -1) {
+    const next = position && order[position.index + dir]
+    // A render in progress belongs to the clip on screen.
+    if (next && !busy) open(next)
+  }
+
+  /** A backend's reason, as a sentence. */
+  const sentence = (e: unknown) => String(e).replace(/^./, (c) => c.toUpperCase())
+
+  /** From the library: the file itself, as it is, onto the clipboard. */
   async function copyClip(c: Clip | Screenshot) {
     try {
       await api.copyClip(c.path)
       notify('title' in c ? 'Clip copied' : 'Screenshot copied')
     } catch (e) {
-      notify(String(e), true)
+      notify(sentence(e), true)
     }
   }
 
@@ -136,9 +147,9 @@
   }
 
   /** A notice that arrived while an Undo was up: shown once that closes. */
-  let queued: [ToastData, number] | null = null
+  let queued: [Notice, number] | null = null
 
-  function showToast(t: ToastData, ms = 3000) {
+  function showToast(t: Notice, ms = 3000) {
     // Never take a pending Undo off the screen.
     if (toast?.action && !t.action) {
       queued = [t, ms]
@@ -161,6 +172,31 @@
     view = v
     viewing = null
   }
+
+  /** What had focus in the library when a clip or screenshot was opened. */
+  let cameFrom: HTMLElement | null = null
+
+  /** Back to the library as it was left: same list, same scroll, same card. */
+  async function closeViewer() {
+    viewing = null
+    shot = null
+    await tick()
+    if (cameFrom?.isConnected) cameFrom.focus()
+    cameFrom = null
+  }
+
+  /** From the rail: list these clips. */
+  function list(s: Scope, name?: string) {
+    library?.stopSelecting()
+    scope = s
+    gameName = name ?? null
+    go('library')
+  }
+
+  // A listed game that is gone (marked "not a game"): back to everything.
+  $effect(() => {
+    if (scope === 'game' && !game) scope = 'all'
+  })
 
   // Audio devices come and go (a headset plugged in); re-read them each
   // time Settings opens. Encoder results are cached, so this is cheap.
@@ -221,9 +257,16 @@
     }
   }
 
-  async function open(path: string) {
+  /** `from`: the list it was opened from; a file from anywhere else has none. */
+  async function open(path: string, from?: string[]) {
     try {
-      viewing = await api.openForEdit(path)
+      const clip = await api.openForEdit(path)
+      // Read now, not on the click: a menu that asked has closed by now and
+      // given focus back to its card.
+      if (!covered && document.activeElement instanceof HTMLElement) cameFrom = document.activeElement
+      viewing = clip
+      copied = false
+      queue = from ?? (queue.includes(path) ? queue : [])
     } catch (e) {
       notify(String(e), true)
     }
@@ -237,28 +280,81 @@
     if (typeof path === 'string') open(path)
   }
 
-  async function render(
-    start: number,
-    end: number,
-    volumes: number[],
-    maxMb: number | null,
-    vertical: number | null,
-    slow: { from: number; to: number; factor: number } | null,
-  ) {
-    if (!viewing) return
-    rendering = true
+  /** The size the viewer's Copy clip (or Save clip) fits under, when
+   *  Settings → Sharing asks for one. */
+  const limitMb = (saving: boolean) => (prefs.shareLimit && (!saving || prefs.shareLimitSave) ? prefs.shareMaxMb : null)
+
+  /** A failure in the viewer: says what, and offers the same thing again.
+   *  The trim is the viewer's own state, so it is still there to retry. */
+  function failed(what: string, e: unknown, retry: () => void) {
+    if (/cancelled/.test(String(e))) return
+    const run = () => {
+      closeToast()
+      retry()
+    }
+    showToast({ text: `${what}: ${e}`, error: true, action: { label: 'Try again', run } }, 15000)
+  }
+
+  /** The selection as a new file next to the original (`…_edit.mp4`), which
+   *  is never written to. Rejects with the backend's reason. */
+  async function render(edit: Edit, maxMb: number | null, why: 'copy' | 'save') {
+    const source = viewing!.path
+    busy = why
+    copied = false
     renderProgress = 0
     try {
-      const path = await api.render(viewing.path, start, end, volumes, maxMb, vertical, slow)
+      return await api.render(source, edit.start, edit.end, edit.volumes, maxMb, edit.vertical, edit.slow)
+    } finally {
+      busy = null
+    }
+  }
+
+  /** Copy clip, in the viewer: the clip's file onto the clipboard, to paste
+   *  into a chat or a folder. The file itself when nothing was changed and
+   *  it meets the size limit; otherwise a render of the selection, kept in
+   *  the library like any saved clip. Says so only once it is there: the
+   *  button itself says Copied, and the size it was fitted under is said
+   *  beside it. */
+  async function copySelection(edit: Edit, untouched: boolean) {
+    if (!viewing || busy || copying) return
+    copying = true
+    const maxMb = limitMb(false)
+    const asIs = untouched && (maxMb === null || viewing.size_bytes <= maxMb * 1e6)
+    let path = viewing.path
+    try {
+      if (!asIs) {
+        try {
+          path = await render(edit, maxMb, 'copy')
+        } catch (e) {
+          return failed("Couldn't prepare the clip", e, () => copySelection(edit, untouched))
+        }
+      }
+      try {
+        await api.copyClip(path)
+        copied = true
+        clearTimeout(copiedTimer)
+        copiedTimer = setTimeout(() => (copied = false), 1600)
+        if (!asIs && maxMb !== null) notify(`Clip copied, under ${maxMb} MB`)
+      } catch (e) {
+        failed("Couldn't copy the clip", String(e).replace(/^couldn't copy the clip: /, ''), () => copySelection(edit, untouched))
+      }
+    } finally {
+      copying = false
+    }
+  }
+
+  /** Save clip, in the viewer: the selection as a new clip in the library. */
+  async function saveSelection(edit: Edit) {
+    if (!viewing || busy) return
+    try {
+      const path = await render(edit, limitMb(true), 'save')
       const run = () => {
         closeToast()
         open(path)
       }
-      showToast({ text: 'Clip rendered', action: { label: 'Open', run } })
+      showToast({ text: 'Clip saved', action: { label: 'Open', run } }, UNDO_MS)
     } catch (e) {
-      if (!/cancelled/.test(String(e))) notify(String(e), true)
-    } finally {
-      rendering = false
+      failed("Couldn't save the clip", e, () => saveSelection(edit))
     }
   }
 
@@ -277,7 +373,7 @@
     pending = [...pending, entry]
     const n = pending.reduce((sum, p) => sum + p.clips.length, 0)
     const one = list[0]
-    const label = n > 1 ? `Deleted ${n} clips` : 'title' in one ? `Deleted ${one.title ?? one.game} clip` : 'Deleted screenshot'
+    const label = n > 1 ? `Deleted ${n} clips` : 'title' in one ? (one.title ? `Deleted “${one.title}”` : 'Clip deleted') : 'Screenshot deleted'
     showToast({ text: label, action: { label: 'Undo', run: undo } }, UNDO_MS)
   }
 
@@ -352,7 +448,7 @@
     showToast({ text: `Ignoring ${name}`, action: { label: 'Undo', run } }, UNDO_MS)
   }
 
-  /** From the Games page: hide it and never detect it again. */
+  /** From a game's clips: hide it and never detect it again. */
   async function notGame(g: GameEntry) {
     if (!settings) return
     const before = settings.ignored_games
@@ -393,14 +489,8 @@
 
   function onkeydown(e: KeyboardEvent) {
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement
-    if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
-      e.preventDefault()
-      toggleSidebar()
-    } else if (!typing && !viewing && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (e.key === '1') go('games')
-      else if (e.key === '2') go('clips')
-      else if (e.key === '3') go('settings')
-    }
+    if (typing || covered || e.ctrlKey || e.altKey || e.metaKey) return
+    if (e.key in KEYS) go(KEYS[e.key])
   }
 
   $effect(() => applyPrefs(prefs))
@@ -460,16 +550,18 @@
         // A render (name_edit, name_edit2, … as library::is_edit) has its
         // own notice from render(); the flash is for clips from the game.
         if (!/_edit\d*\.[^.\\/]+$/.test(path)) {
-          notify(`Saved ${path.split(/[\\/]/).pop()}`)
+          const run = () => {
+            closeToast()
+            open(path)
+          }
+          showToast({ text: 'Replay saved', action: { label: 'Open', run } }, UNDO_MS)
           flash = true
           setTimeout(() => (flash = false), 400)
         }
         refreshLibrary()
         refreshUsage()
       }),
-      onScreenshotSaved((path) => {
-        notify(`Screenshot saved as ${path.split(/[\\/]/).pop()}`)
-      }),
+      onScreenshotSaved(() => notify('Screenshot saved')),
       onMarked(() => notify('Moment marked')),
       onLibraryChanged(() => {
         refreshLibrary()
@@ -496,7 +588,11 @@
     const motion = matchMedia('(prefers-reduced-motion: reduce)')
     const onMotion = () => applyPrefs(prefs)
     motion.addEventListener('change', onMotion)
+    const width = matchMedia(NARROW)
+    const onWidth = () => (narrow = width.matches)
+    width.addEventListener('change', onWidth)
     return () => {
+      width.removeEventListener('change', onWidth)
       clearInterval(tick)
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onFocus)
@@ -506,131 +602,139 @@
   })
 </script>
 
-<svelte:window {onkeydown} bind:innerWidth />
+<svelte:window {onkeydown} />
 
-<div class="flex h-full">
-  <Sidebar active={nav} collapsed={sidebarCollapsed} {usage} onnavigate={go} onstorage={() => openSettings('Storage')} />
+<div class="flex h-full flex-col">
+  <!-- The window's own strip (Windows): nothing of the app's is in it. -->
+  <WindowControls />
 
-  <div class="flex min-w-0 flex-1 flex-col">
-    <!-- On Windows this is the title bar too: drag it, double-click to maximize. -->
-    <header class="flex h-14 flex-none items-center gap-3 border-b border-line bg-panel pr-4 pl-3" data-tauri-drag-region>
-      <button
-        class="btn-icon text-muted"
-        onclick={toggleSidebar}
-        aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        title="Toggle sidebar (Ctrl+B)"
-      >
-        <PanelLeft size={18} />
-      </button>
-      <h1 class="display-face truncate text-title font-semibold" data-tauri-drag-region>{title}</h1>
-      <div class="h-full min-w-0 flex-1" data-tauri-drag-region></div>
-      {#if newRelease}
-        <button
-          class="btn-icon flex-none text-accent"
-          onclick={() => (updatePrompt = true)}
-          title="Update to {newRelease.version}"
-          aria-label="Update to {newRelease.version}"
-        >
-          <Download size={18} />
-        </button>
-      {/if}
-      <StatusBar {status} {now} {flash} {saving} {hotkey} onsave={save} onopen={pickVideo} onchoosescreen={chooseScreen} onignore={ignoreGame} />
-      <WindowControls />
-    </header>
-
-    <main class="flex min-h-0 flex-1 flex-col bg-canvas">
-      <div class="min-h-0 flex-1 overflow-y-auto p-6">
-        {#if viewing}
-          <ClipViewer
-            clip={viewing}
-            {rendering}
-            progress={renderProgress}
-            onback={() => (viewing = null)}
-            onrender={render}
-            oncancel={() => api.cancelRender()}
-            ondelete={() => viewing && remove([viewing])}
-            onshare={() => viewing && api.reveal(viewing.path)}
-            oncopy={() => viewing && copyClip(viewing)}
-            onupdate={inLibrary(viewing) ? (p) => viewing && update(viewing, p) : undefined}
-          />
-        {:else if libraryError && view !== 'settings'}
-          <StateMessage icon={CircleAlert} title="Couldn't read the clips folder" body={libraryError} error>
-            <button class="btn" onclick={() => openSettings('Storage')}>Storage settings</button>
-            <button class="btn-primary" onclick={refreshLibrary}>Try again</button>
-          </StateMessage>
-        {:else if view === 'game' && game}
-          <GameView
-            {game}
-            {clips}
-            screenshots={shots}
-            onback={() => go('games')}
-            onopen={(c) => open(c.path)}
-            onshot={(s) => (shot = s)}
-            ondelete={(c) => remove([c])}
-            onshare={(c) => api.reveal(c.path)}
-            oncopy={copyClip}
-            onfavorite={(c) => update(c, { favorite: !c.favorite })}
-          />
-        {:else if view === 'clips'}
-          <ClipsView
-            {clips}
-            {loading}
-            {hotkey}
-            onopen={(c) => open(c.path)}
-            ondelete={(c) => remove([c])}
-            ondeletemany={remove}
-            onshare={(c) => api.reveal(c.path)}
-            oncopy={copyClip}
-            onfavorite={(c) => update(c, { favorite: !c.favorite })}
-          />
-        {:else if view === 'settings' && settings}
-          <SettingsView {settings} {usage} {caps} {status} bind:category bind:update={newRelease} onchange={changeSettings} onerror={(e) => notify(e, true)} onupdate={() => (updatePrompt = true)} onchoosescreen={chooseScreen} />
-        {:else}
-          <GamesView
-            {games}
-            {loading}
-            {hotkey}
+  <div class="relative flex min-h-0 flex-1">
+    <!-- A clip or screenshot open in its place: this can't be seen, clicked or tabbed to. -->
+    <div class="flex min-w-0 flex-1 {covered ? 'invisible' : ''}" inert={covered}>
+      <Rail
+        open={!prefs.navCollapsed && !narrow}
+        {narrow}
+        settings={view === 'settings'}
+        {category}
+        {scope}
+        game={gameName}
+        {clips}
+        {games}
+        update={newRelease}
+        ontoggle={() => setPrefs({ navCollapsed: !prefs.navCollapsed })}
+        onscope={list}
+        onsettings={() => go('settings')}
+        oncategory={(c) => (category = c)}
+        onback={() => go('library')}
+        onupdate={() => (updatePrompt = true)}
+      />
+      <!-- Each page brings its own header and, under it, its scroller; the
+           capture strip closes the library's column. Settings opens over the
+           library, which stays mounted under it (out of sight and reach), so
+           Back to clips finds the same list, search and scroll. -->
+      <main class="relative flex min-w-0 flex-1 flex-col">
+        <div class="flex min-h-0 flex-1 flex-col {view === 'settings' ? 'invisible' : ''}" inert={view === 'settings'}>
+          {#if libraryError}
+            <header class="page-header">
+              <h1 class="font-display text-page font-semibold">All clips</h1>
+            </header>
+            <div class="min-h-0 flex-1 overflow-y-auto px-8 pb-6">
+              <StateMessage title="Couldn't read the clips folder" body={libraryError} error>
+                <button class="btn" onclick={() => openSettings('Storage')}>Storage settings</button>
+                <button class="btn-primary" onclick={refreshLibrary}>Try again</button>
+              </StateMessage>
+            </div>
+          {:else}
+            <ClipsView
+              bind:this={library}
+              {clips}
+              screenshots={shots}
+              {scope}
+              {game}
+              behind={covered || view === 'settings'}
+              {loading}
+              {hotkey}
+              {status}
+              {settings}
+              onopen={(c, from) => open(c.path, from)}
+              onshot={(s) => {
+                if (document.activeElement instanceof HTMLElement) cameFrom = document.activeElement
+                shot = s
+              }}
+              ondelete={(c) => remove([c])}
+              ondeletemany={remove}
+              oncopy={copyClip}
+              onreveal={(c) => api.reveal(c.path).catch((e) => notify(sentence(e), true))}
+              onfavorite={(c) => update(c, { favorite: !c.favorite })}
+              onnotgame={notGame}
+              onpick={pickVideo}
+              onchoosescreen={chooseScreen}
+              onsettings={openSettings}
+            />
+          {/if}
+          {#if settings?.ads}
+            <div class="flex flex-none justify-center border-t border-line p-3">
+              <AdSlot enabled width={728} height={90} />
+            </div>
+          {/if}
+          <StatusBar
             {status}
-            {settings}
             {now}
-            onopen={(g) => {
-              gameName = g.name
-              go('game')
-            }}
-            onnotgame={notGame}
+            {flash}
+            {saving}
+            {hotkey}
+            notice={covered || view === 'settings' ? null : toast}
+            selection={covered || view !== 'library' ? null : (library?.selection() ?? null)}
+            onsave={save}
             onchoosescreen={chooseScreen}
-            onsettings={openSettings}
+            onignore={ignoreGame}
+            onrecording={() => openSettings('Recording')}
+            ondismiss={closeToast}
           />
-        {/if}
-      </div>
-      {#if settings?.ads}
-        <div class="flex justify-center border-t border-line p-3">
-          <AdSlot enabled width={728} height={90} />
         </div>
-      {/if}
-    </main>
+        {#if view === 'settings'}
+          <!-- No capture strip here: recording and the hotkeys go on, and
+               what has to be said is said in Settings' header. -->
+          <div class="settings absolute inset-0 flex flex-col bg-canvas">
+            {#if settings}
+              <SettingsView {settings} {usage} {caps} {status} {category} bind:update={newRelease} notice={covered ? null : toast} ondismiss={closeToast} onchange={changeSettings} onerror={(e) => notify(e, true)} onupdate={() => (updatePrompt = true)} onchoosescreen={chooseScreen} />
+            {/if}
+          </div>
+        {/if}
+      </main>
+    </div>
+
+    {#if viewing}
+      <ClipStudio
+        clip={viewing}
+        {busy}
+        {copied}
+        progress={renderProgress}
+        {position}
+        notice={toast}
+        ondismiss={closeToast}
+        onback={closeViewer}
+        onstep={step}
+        oncopy={copySelection}
+        onsave={saveSelection}
+        oncancel={() => api.cancelRender()}
+        ondelete={() => viewing && remove([viewing])}
+        onreveal={() => viewing && api.reveal(viewing.path).catch((e) => notify(sentence(e), true))}
+        onupdate={inLibrary(viewing) ? (p) => viewing && update(viewing, p) : undefined}
+      />
+    {/if}
+
+    {#if shot}
+      {@const s = shot}
+      <ScreenshotViewer shot={s} notice={toast} ondismiss={closeToast} onclose={closeViewer} oncopy={() => copyClip(s)} onreveal={() => api.reveal(s.path).catch((e) => notify(sentence(e), true))} ondelete={() => remove([s])} />
+    {/if}
   </div>
 </div>
 
 {#if dragging}
-  <div class="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-canvas/85">
-    <div class="display-face rounded-surface border-2 border-accent px-10 py-6 text-page font-semibold">Drop to open</div>
+  <div class="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-canvas p-4">
+    <div class="flex size-full items-center justify-center rounded-surface border border-dashed border-line-strong text-title font-semibold">Drop a video to open it</div>
   </div>
-{/if}
-
-{#if toast}
-  <Toast data={toast} onclose={closeToast} />
-{/if}
-
-{#if shot}
-  {@const s = shot}
-  <ScreenshotViewer
-    shot={s}
-    onclose={() => (shot = null)}
-    oncopy={() => copyClip(s)}
-    onshare={() => api.reveal(s.path)}
-    ondelete={() => remove([s])}
-  />
 {/if}
 
 {#if updatePrompt && newRelease}

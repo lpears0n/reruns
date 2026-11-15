@@ -14,7 +14,7 @@ unchanged. The GitHub repo is now `lpears0n/reruns` (the old
 settings or clips: there were no released users.
 
 Last updated: 2026-11-04. Current plans live in the repo: `docs/ROADMAP.md`
-(features, platforms), `docs/DESIGN.md` (design system, performance budgets),
+(features, platforms), `docs/DESIGN.md` (design system), `docs/PERFORMANCE.md` (performance rules and budgets),
 `docs/WINDOWS.md` (Windows build and what is unverified). The notes below
 are the running log; the sections at the end are newest.
 
@@ -96,27 +96,11 @@ Nothing has been committed to git yet (repo initialized, no commits).
 - When a recorded window closes, pipewiresrc logs `target not found` just before KWin's unmapped event. Harmless, but it's logged at ERROR level; quiet it in M4.
 - No desktop/non-game capture yet. Option without a picker: zkde_screencast `stream_output` (needs a wl_output binding).
 
-## UI design rules (user, 2026-10-28; third pass — supersedes earlier specs)
-Tailwind 4; tokens in app/src/app.css (canvas #0D0D0F, panel #17181B, raised #1E1F23, line #26272C, accent orange #FF7A1A,
-danger #FF3B5C, radius 6px controls / 8px cards). Fonts bundled: Inter Variable (UI) + Archivo Variable at 112% width
-(`display-face` utility: headings, game names, numbers).
-Anti-"vibecoded" rules (from research; audit against these):
-- No colored accent strips on nav/cards, no glows, no dashed upload boxes, no uppercase eyebrow labels, no status pills.
-- One dominant element per screen; vary weight/size instead of uniform cards.
-- Recorder status lives in ONE place: right side of the top bar (StatusBar.svelte). Storage ring = storage only.
-- Drag-and-drop = full-window overlay only while dragging; "Open video" is an icon in the top bar.
-- Motion only when it means something (shutter flash on the Clip button when a clip saves).
-- Real, specific copy; design empty/error states.
-Layout (games-first, user-approved 2026-10-28): top bar (logo left, StatusBar right) + 72px icon rail
-(Games, All clips, spacer, StorageRing with size label, Settings). Views: GamesView (hero = playing/last game with Steam
-library_hero + logo.png; "Recently played" grid of library_capsule covers, fallback = darkened clip frame + title),
-GameView (banner + clips grouped by local day with "Played 1h 20m"), ClipViewer (replaces trimmer: view mode with
-custom controls + video box sized to the clip's aspect via container units; Trim toggles in/out/levels/Render in place),
-ClipsView (all clips grid). Focus ring: :focus-visible only, orange.
+## UI notes
+The design system is `docs/DESIGN.md` (rewritten from scratch 2026-11-13; the earlier design specs were deleted).
 Data: app/src-tauri/src/games.rs — sessions.jsonl in $XDG_DATA_HOME/clip.sh (logged by service.rs on game start/stop),
 list_games joins sessions + clips + steam_art(); clips get `<clip>.mp4.json` {game, steam_app_id} on save (edits copy it);
 older clips resolve the app id by name against installed appmanifests.
-- Settings: General / Recording / Audio / Hotkeys / Storage; rows in cards with title+description left, control right.
 Ad slots: AdSlot component, off unless `"ads": true` in settings.json (728×90 under the main view).
 - Screenshot the app without focus: `CLIPSH_SHOT=out.png ./target/debug/examples/kwin_windows clip-sh`.
 - uridecodebin `caps` property breaks with nvh264dec (CUDA output never exposed → hang). Let downstream negotiate instead.
@@ -911,6 +895,281 @@ behaves changed.
   plugins ("no element uridecodebin"). Delete the DLLs from
   `app/src-tauri/gst/bin`, `gst/plugins`, `target/debug` and
   `target/debug/gst-plugins` afterwards.
+- **Redesign (branch `redesign`, on top of `library-features`, 2026-11-13):**
+  light "tactile minimalism" to the owner's written spec; see
+  docs/DESIGN.md §2.0. Canvas #F5F5F7, white static panels with one
+  hairline, ink #1D1D1F, accent #0071E3. Relief only on controls, from
+  `tokens.css` (`--t-shadow-raise`, `-raise-accent`, `-press`; `-edge` is
+  the hairline round a picture). Inter only (Archivo removed, by hand
+  from `pnpm-lock.yaml` since pnpm isn't on PATH here: run `pnpm install`
+  once). Layout spacing is on an 8 px grid, 4 px only for tight pairs;
+  controls are 32 px high. Accents were re-tuned dark enough for white
+  text ("Yellow" became "Gold").
+  The sidebar, its collapse (Ctrl+B) and `prefs.sidebarCollapsed` are
+  gone: pages are a segmented control in the title bar (`App.svelte`),
+  and `StatusBar.svelte` is the dock at the bottom with storage and the
+  Clip button. `GamesView` is a row per game with its newest clips (no
+  hero, no cover cards). Earlier notes in this file about the sidebar and
+  the dark theme describe the old shell. Two earlier passes the same
+  days (guide blue with condensed Archivo, then dark graphite
+  neumorphism) were replaced by this one.
+  Text and buttons on video, art and thumbnails stay white on a dark
+  scrim; anything new placed over a picture must not use `text-fg`.
+  There is no dark theme. The in-game popup is the same white card.
+  UI tests pass against the installed Edge (`CHROMIUM_PATH`); Playwright's
+  own Chromium isn't installed on the owner's PC. Not yet looked at in
+  the real app window with real game art, nor on Linux (WebKitGTK).
+  Known: a toast (bottom right) covers "Render clip" in the trimmer for
+  its 3 s; it did before the redesign too.
+- **Sidebar and dated grid (same branch, 2026-11-13, later):** the row
+  per game is gone, to the owner's second written spec; see
+  docs/DESIGN.md §2.7. `App.svelte` is header (wordmark, `Library |
+  Settings`, filter box, thumbnail-size slider), `Sidebar.svelte` (All
+  Clips, Starred, games with counts; Settings' pages while Settings is
+  open; storage at the foot), the page, and `StatusBar.svelte` as a flat
+  dock (dot, game, buffer, Save Clip + key). `ClipsView.svelte` is the
+  whole library: the sidebar's choice (`Scope`), in sections by day, with
+  a game's screenshots among its clips. `GamesView`, `GameView` and
+  `GameCover` are deleted; the first-run list moved to `FirstRun.svelte`.
+  `VirtualGrid` now takes sections and windows rows (headings and card
+  rows); it works out the columns itself and needs every card the same
+  height, so cards no longer show label chips (labels still filter, and
+  show in the viewer). The card-size setting became the slider
+  (`prefs.cardMin`, px). Cards lost "Show in folder" (the viewer has it).
+  "Favourite" is "Star" everywhere. Keys: `1` Library, `2` Settings.
+  Left out on purpose: a Sessions list, auto-named clips ("Boss Fight":
+  nothing detects events), a blur behind the duration pill (§3.1), and
+  square game icons (the sidebar crops Steam's portrait capsule).
+  The pass before this one is kept as a stash entry, "redesign: before
+  the sidebar layout". UI tests pass (all six scenarios, Edge); not yet
+  seen in the real window, with real thumbnails and art, or on WebKitGTK.
+- **Obsidian (same branch, 2026-11-14):** the app is dark, to the owner's
+  third written spec; see docs/DESIGN.md §2.0. It is all in `tokens.css`
+  (the in-game popup follows). Primary buttons and switched-on toggles
+  are platinum. The accent picker in Settings → Appearance is gone
+  (`prefs.accent` is ignored): colour now comes from the game
+  (`lib/accents.ts` `gameAccent`: three by hand, the rest a hue from the
+  name), and only as light on an edge. The sidebar row and Save Clip take
+  it through `--rim` (the `inset-shadow-rim` utility); a lightbox sets
+  `--color-accent` for everything inside it.
+  A clip opens in a lightbox (`ClipViewer.svelte`, the `lightbox`
+  utility) over the sidebar and page; the library stays mounted and
+  `inert` behind it, and `ClipsView` gets `behind` so it leaves the keys
+  alone. Trim mode is gone: the strip under the picture (`Timeline.svelte`,
+  the hover sprite's frames as a filmstrip) always has its handles, `I`
+  and `O` always work, `T` does nothing. "Render clip" is "Save Trim";
+  size, format and slow motion are behind Options. New: "Copy for
+  Discord (10MB)" (`App.svelte` `copyForDiscord`) copies the clip itself
+  when it is untouched and under 10 MB, else renders the edit at 10 MB
+  and copies that; the render stays in the library as an edit.
+  `ScreenshotViewer` is the same lightbox (no longer a `<dialog>`).
+  Toasts are a pill centred above the dock; the lightboxes keep that band
+  clear.
+  Not done, on purpose: a waveform (nothing measures a clip's audio; it
+  needs a pass in the thumbnailer), and `#52525B` as text (2.5:1).
+  The light sidebar layout is kept as a stash entry, "light sidebar
+  layout, before the dark theme". UI tests pass (six scenarios, Edge);
+  their thumbnails are drawn stand-ins. Not yet seen in the real window
+  with real frames, sprites and art, nor on WebKitGTK (two blurs, §3.1).
+- **Smoked glass (same branch, 2026-11-13, fourth pass):** to the owner's
+  fourth written spec; see docs/DESIGN.md §2.0. No lines between title
+  bar, sidebar and page; an ambient light in the game's colour behind
+  everything (`App.svelte` `.ambient`, `glowGame`); glass (`liquid-glass`,
+  `seg`, `thumb` utilities in `app.css`, values in `tokens.css`). The dock
+  is a floating capsule (`StatusBar.svelte`, still a `<footer>` carrying
+  `--rim`) that the page scrolls under; it sits inside the `inert`
+  wrapper, so a lightbox, which now covers it and the whole window under
+  the title bar, takes it out of reach. Toasts drop to the window's
+  bottom edge over a lightbox (`Toast` `low`). A game's page has a banner
+  header (`ClipsView.svelte`). Sidebar icons fall back to a frame of the
+  game's newest clip. Cards lost `cv-auto` (its paint containment clipped
+  the hover lift and glow; the grid still windows above 120). Range
+  inputs are restyled globally as faders. Hades II has a colour by hand.
+  The lightbox header is one line; the picture gained about 56 px.
+  Not done, on purpose: a waveform (still nothing measures a clip's
+  audio; the strip is the clip's frames), and Steam's square icon (the
+  backend doesn't list it). The "mountains, dots and red/green bars" in
+  earlier screenshots were the UI test's stand-in frames, not the app's;
+  the stand-ins are now soft landscapes. Screenshots came from
+  `tests/ui.cjs` (Playwright, Edge), not the Playwright MCP: that browser
+  has no Tauri bridge. UI tests pass (six scenarios). Not yet seen in the
+  real window with real frames and art, nor on WebKitGTK, where the page
+  now scrolls under one blurred capsule (§3.1 advised against that).
+- **Sharp native (same branch, 2026-11-13, fifth pass):** the owner
+  rejected the smoked-glass pass above as bubbly; see docs/DESIGN.md §2.0.
+  Gone: the ambient light, `liquid-glass`, the floating capsule, pills,
+  the hover lift and glow, the banner header, `Toast`'s `low`. Now: page
+  `#0E0E10`, bars `#141417`, radii 6/4/8, a 38 px status bar edge to edge
+  (in flow again, after the `inert` wrapper; a lightbox ends above it as
+  before the glass pass). Select mode draws its actions over the status
+  bar (`ClipsView` `bind:selecting` → `StatusBar` `covered`, which makes
+  the bar `inert`). Game art slots in the sidebar and the game header fall
+  back to a clip frame, then the game's colour. `thumb` is a dark frame
+  with a film glyph. The UI test no longer draws stand-in frames: clip
+  thumbnails 404 there, so its screenshots show empty frames. Kept from
+  the glass pass: the sliding `seg` key, restyled faders, the one-line
+  lightbox header, sidebar clip-frame fallback, Hades II's colour.
+  "Clip copied" beside "Copied!" in earlier screenshots was the test's
+  Ctrl+C notice still up; Copy for Discord raises none, and the test now
+  asserts it. The Settings scroller already began under the title bar;
+  the test asserts that too. UI tests pass (six scenarios, Edge). Not
+  yet seen in the real window with real frames and art, nor on WebKitGTK.
+- **Glass on sharp corners (same branch, 2026-11-13, sixth pass):** the
+  owner asked for the glass and atmosphere again, on the fifth pass's
+  geometry; see docs/DESIGN.md §2.0. Page `#09090B`, bars `#0F1014`, radii
+  6/4/10/14. Back, by the owner's choice of "confined and cooler": an
+  ambient light in the page's top right corner only (`App.svelte`
+  `.ambient`, a `<span>` so `main > div` stays the scroller; `glowGame`;
+  `Sidebar` `onhover`). `liquid-glass` for the tabs, notices and dialogs;
+  the lightbox is an inset 14 px glass pane that dims the window round it
+  with a spread shadow. Coloured badges became tracked type (`meta`). A
+  game's page has Steam's hero as a banner fading into the page. Cards
+  lift on hover again (`thumb`). The status bar is 40 px with a blur,
+  which makes it a stacking context: the page's scroller is `z-[1]` so
+  the selection bar inside it paints over the status bar (it was hidden
+  under it for one run; the test now asks what is on top).
+  **Real pictures in UI screenshots:** `tests/ui.cjs` takes
+  `RERUNS_SHOT_FRAMES` (a folder of `thumb-N.jpg` / `sprite-N.jpg`) and
+  `RERUNS_STEAM_ART` (Steam's `appcache/librarycache`). On the owner's PC
+  the frames are in `app/tests/local-assets/` (git-ignored), pulled with
+  ffmpeg from his own clips in `Videos\Reruns`, so they are real gameplay
+  but not of the games the fixtures name. Without the variables the grid
+  shows empty frames, as in CI. All three fixture games now list art; only
+  the sidebar's portrait fails its first request (the retry test).
+  Not done, by the owner's choice: a waveform (the strip stays the clip's
+  frames). Screenshots are from `tests/ui.cjs`, not the Playwright MCP
+  (no Tauri bridge there). UI tests pass (six scenarios, Edge), with and
+  without the pictures. Not yet seen in the real window, nor on WebKitGTK.
+
+- **Studio redesign (same branch, 2026-11-13, seventh pass):** the owner threw
+  out the glass passes and the old design doc; see the new `docs/DESIGN.md`
+  (the old one's performance sections are now `docs/PERFORMANCE.md`, same
+  section numbers). Solid surfaces (`#0A0B0D` / `#111317` / `#181B21`,
+  hairline `#242832`), radii 4/6/8, no blur anywhere, accent `#FF6A2B` for
+  trim, selection and focus only; per-game colours are gone from the chrome
+  (`accents.ts` now only tints a game's initial in the rail). Layout: a
+  52 px icon rail (`Rail.svelte`, opens to 208 px; replaces `Sidebar`), each
+  page renders its own 40 px title bar + scroller into `<main>`, a 36 px
+  status strip that also carries notices (`Toast` is gone) and becomes the
+  selection bar (`ClipsView` exports `selection()`, read by `App`).
+  `ClipStudio.svelte` replaces `ClipViewer`: full canvas, Left/Right step
+  clips (J/L now seek 5 s), deck with custom `Fader.svelte` (no native
+  range inputs left). Density is `prefs.columns` (default 3), not a size
+  slider. Cards never show the game as title and nothing is drawn on a
+  thumbnail. **Waveform:** `waveform.ts` fetches the clip from the media
+  server and decodes its first audio track in the webview (clips over
+  300 MB get none); `media_server.rs` now sends
+  `Access-Control-Allow-Origin: *` for that. Seen working in Edge with a
+  VP9/Opus cut of a real clip; **not yet seen in the real window** (AAC in
+  WebView2, WebKitGTK), where a failed decode just hides the audio lane.
+  The Rust change was not compiled here. `tests/ui.cjs`: new `worst`
+  scenario (worst-case data at 900×600, fails on overlap or overflow in
+  any bar), `RERUNS_SHOT_CLIP` for a clip with sound, and it exports
+  `fixtures`/`mockBridge`. Screenshots were also taken through the
+  Playwright MCP this time: its page takes the bridge with
+  `addInitScript({ path })` (a generated `tests/local-assets/mcp-mock.js`)
+  and routes asset requests to Vite, which serves `tests/local-assets/`.
+  UI tests pass (seven scenarios, Edge), with and without real pictures.
+- **Debug builds on Windows had no encoder.** The build copies
+  `gst/plugins/.keep` to `target/debug/gst-plugins`, and
+  `point_gstreamer_at_bundled_plugins` took any folder there for the
+  bundle, leaving GStreamer with no plugins ("no working H264 encoder
+  found" on every dev run). It now needs a DLL in the folder. Seen and
+  fixed on the owner's PC: the next run recorded with NVENC. This PC has
+  no pnpm on PATH (Node 26, no corepack); `npx tauri dev --config` with
+  `{"build":{"beforeDevCommand":"npm run dev"}}` runs it without, with
+  the GStreamer paths set as CI does.
+
+- **Media utility redesign (same branch, 2026-11-13, eighth pass):** to the
+  owner's long written brief (open → latest moment → scrub → trim → copy
+  or save). Replaces the studio pass above; see the rewritten
+  `docs/DESIGN.md`. Warm charcoal (`#151719` / `#1C1F22` / `#25292D`),
+  accent `#FF985E` with near-black text on the one primary button, system
+  font (Segoe UI Variable), radii 4/8/10/12. Navigation is 216 px with
+  names (72 px folded, kept in `prefs.navCollapsed`; under 1080 px it folds
+  by itself). Page headers carry title, count, search and one options menu
+  (sort, thumbnail size `prefs.thumbSize`, tag filter, select, not a game).
+  Cards: length drawn in the picture's corner, title = clip title else the
+  game (`format.ts` `gameName`: drops ®™, aliases like "Rainbow Six
+  Siege"). Viewer: header with one menu, one timeline, row with Play /
+  time / volume / summary + Reset / Copy clip / Save clip; trims kept per
+  clip for the session. "Copy for Discord (10MB)" became Copy clip with a
+  size limit in Settings → Sharing (`prefs.shareLimit`, on, 10 MB);
+  Save clip renders the selection as an `_edit`. Tags are off unless
+  Settings → Appearance → Tags (`prefs.tagging`); the data is untouched.
+  Notices: capture strip, or the viewer's row. `Popover.svelte` is the one
+  menu/popover (fixed, clamped; keys stay inside; it now waits until shown
+  before focusing, and refocuses its opener only if nothing else took
+  focus: both found by the tests). Earlier memory/notes banning a
+  duration on the thumbnail and the game as a card title are superseded by
+  this brief. `tests/ui.cjs` rewritten for it (seven scenarios pass,
+  Edge), plus `shots`: pictures at 1440/1280/1024 from
+  `tests/local-assets/frames.json` (git-ignored; maps real frames to their
+  games). Not yet seen in the real Tauri window, nor on WebKitGTK; the
+  waveform's AAC decode in WebView2 is still unverified. `app/package.json`
+  still lists `@fontsource-variable/inter` (unused; pnpm isn't on PATH
+  here to update the lock).
+
+- **Proportions pass (same branch, 2026-11-14, ninth pass):** to the
+  owner's brief that the eighth pass still read as a generic dark
+  dashboard and the viewer was too large. See docs/DESIGN.md. Viewer: one
+  workspace column (1080 px at most, following the picture's width, 560
+  minimum) sized in JS from the viewer's measured box (`bind:clientWidth/
+  Height`, so only a resize recomputes it), a little above the middle;
+  timeline 60 px, row 40 px right under it, fullscreen as a button in the
+  row (the hover button over the picture is gone). The stage no longer has
+  `container-type`, which had trapped the fullscreen picture inside the
+  stage. Weights: regular for nav, labels, metadata; medium for buttons;
+  semibold for titles, headings, the current nav row. Radii 3/6/8/10.
+  Secondary buttons are outlined, icon buttons bare, toggles accent when
+  on. Sidebar: full-width 40 px rows, no counts, 2 px accent edge on the
+  current row; in Settings it holds Back to clips and Settings' pages
+  (Settings' own page list is gone). Settings opens over the library,
+  which stays mounted (`invisible inert`), so search and scroll survive;
+  no capture strip there, notices in Settings' header. Cards: title and
+  time on one line, game/Trimmed/star under it, hover actions cover the
+  right of both lines. `tests/ui.cjs` updated (seven scenarios pass,
+  Edge) and asserts Back to clips keeps the search and scroll; `shots`
+  covers 1440×900, 1280×800, 900×600 and a 16:9 clip
+  (`tests/local-assets/clip-16x9.webm`, a crop of the ultrawide one).
+  Then run in the real Tauri window on Windows (dev build, the owner's
+  library), driven over WebView2's debugging port
+  (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=…`,
+  Playwright `connectOverCDP`). Found: fullscreen made the window
+  fullscreen but the picture kept its place in the column, because the
+  player carried both `relative` and `fixed` and Tailwind's order let
+  `relative` win; `relative` is now only outside fullscreen, and the
+  test asserts fullscreen fills the window. Seen working natively: the
+  viewer at 1280×902 (1080×452 for a 3440×1440 clip) and the 884×591
+  minimum, fullscreen at 3440×1440 and back, the waveform decoded in
+  WebView2, playback with no dropped frames, Settings and Back to clips.
+  A benign "ResizeObserver loop" warning fires in the library on window
+  resize (VirtualGrid; delivered next frame, not logged by the app).
+  Seen in passing: the recorder's HDR lookup gave 240 nits SDR white /
+  456 peak on one start and the 80 / 0 fallback on the next two, same
+  display. Not tried: Copy clip / Save clip (they write files), the
+  in-game popup, WebKitGTK.
+- **Finishing pass (same branch, 2026-11-14, tenth):** the owner kept the
+  ninth pass's structure and asked for softer, more responsive details.
+  Nav rows inset 8 px with 6 px corners, current row 8% + medium + a
+  3 × 16 accent tab inside it (glyphs unmoved). Timeline: 1 px accent
+  hairline on the kept range (40% while it is the whole clip), 4 px
+  handles a step under the accent that widen outward (transform) and show
+  their time on hover/focus/drag, lighter seams, waveform at 70%, cut
+  parts at 66%; `ew-resize` stays while a handle is held. Grid: second
+  card line 18 px and day heading row 36 px (title to next day 66 → 40
+  px), a hairline ring on card hover. Copy clip's button says ✓ Copied
+  for 1.6 s at a fixed width (App owns `copied`; a `copying` guard stops
+  a second as-is copy); the notice beside it only for "under N MB".
+  Hover/press now use the strong ease-out (plain `ease` started slowly).
+  `tests/ui.cjs`: copy failure → Try again → Copied (width checked), nav
+  weight 500, handle colours; `shots` adds nav hover/focus, folded hover,
+  handle hover/drag. Checked in Edge only: drag has 0 px lag, reduced
+  motion zeroes every touched transition, maximized 3440 at 100%/125%
+  keeps the 1080 workspace. Not run in the real Tauri window.
+  HDR: the 80 / 0 above was the display not answering (game minimized,
+  03:46 local); an unread SDR white level is now 0 (was a silent 80),
+  re-read each scan; see docs/HDR.md.
 
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then

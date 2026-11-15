@@ -1,10 +1,11 @@
 <script lang="ts" module>
-  export const categories = ['General', 'Recording', 'Audio', 'Hotkeys', 'Storage', 'Appearance'] as const
-  export type Category = (typeof categories)[number]
+  /** The pages, listed in the navigation while Settings is open. */
+  export const CATEGORIES = ['General', 'Recording', 'Audio', 'Hotkeys', 'Storage', 'Sharing', 'Appearance'] as const
+  export type Category = (typeof CATEGORIES)[number]
 </script>
 
 <script lang="ts">
-  import { AudioLines, Check, FolderOpen, HardDrive, Keyboard, Palette, Play, SlidersHorizontal, Video } from '@lucide/svelte'
+  import { FolderOpen, Play, X } from '@lucide/svelte'
   import { open as openDialog } from '@tauri-apps/plugin-dialog'
   import {
     api,
@@ -20,10 +21,11 @@
     type AudioLevel,
     onAudioLevel,
   } from './api'
+  import Fader from './Fader.svelte'
   import { bytes } from './format'
   import HotkeyBinder from './HotkeyBinder.svelte'
   import LevelMeter from './LevelMeter.svelte'
-  import { ACCENTS, type Accent, prefs, setPrefs } from './prefs.svelte'
+  import { prefs, setPrefs } from './prefs.svelte'
   import {
     CODEC_LABEL,
     ENCODER_LABEL,
@@ -35,6 +37,7 @@
   } from './quality'
   import Row from './Row.svelte'
   import Segmented from './Segmented.svelte'
+  import type { Notice } from './StatusBar.svelte'
   import Toggle from './Toggle.svelte'
 
   let {
@@ -42,7 +45,9 @@
     usage,
     caps,
     status,
-    category = $bindable(),
+    category,
+    notice,
+    ondismiss,
     update: available = $bindable(null),
     onchange,
     onerror,
@@ -54,6 +59,9 @@
     caps: Capabilities | null
     status: Status | null
     category: Category
+    /** What just happened (a setting that didn't save): said in the header, as there is no capture strip here. */
+    notice: Notice | null
+    ondismiss: () => void
     /** A newer release, once one has been found. */
     update?: UpdateInfo | null
     onchange: (s: Settings) => Promise<void>
@@ -92,15 +100,6 @@
     setTimeout(() => (copied = false), 1500)
   }
 
-  const icons = {
-    General: SlidersHorizontal,
-    Recording: Video,
-    Audio: AudioLines,
-    Hotkeys: Keyboard,
-    Storage: HardDrive,
-    Appearance: Palette,
-  }
-
   const lengths = [15, 30, 60, 120, 180, 300]
   const audioRates = [128, 160, 192, 256, 320]
   // Same steps as Medal's PC Storage limit.
@@ -131,6 +130,9 @@
     if (p) update({ fps: p.fps, bitrate_kbps: p.bitrate_kbps, codec: p.codec, encoder: null })
   }
 
+  /** The bitrate under the thumb while it is dragged, in Mbps. */
+  let bitrateDraft = $state<number | null>(null)
+
   const lengthLabel = (s: number) => (s < 60 ? `${s} seconds` : `${s / 60} minute${s > 60 ? 's' : ''}`)
 
   // Storage
@@ -150,8 +152,13 @@
     else if (settings.storage_limit_gb == null) update({ storage_limit_gb: 20 })
   }
 
+  // Sharing: the sizes chat apps cap uploads at.
+  const shareSizes = [10, 25, 50, 100, 500]
+  let customShare = $state(false)
+  const shareChoice = $derived(customShare || !shareSizes.includes(prefs.shareMaxMb) ? 'custom' : String(prefs.shareMaxMb))
+
   // Updates
-  let support = $state<{ configured: boolean; version: string } | null>(null)
+  let support =$state<{ configured: boolean; version: string } | null>(null)
   let checking = $state(false)
   let checked = $state(false)
   let updateError = $state<string | null>(null)
@@ -238,28 +245,32 @@
   })
 </script>
 
-<div class="mx-auto flex h-full max-w-(--container-settings) gap-8">
-  <nav class="w-44 flex-none space-y-0.5">
-    {#each categories as c (c)}
-      {@const Icon = icons[c]}
-      <button
-        class="flex h-9 w-full items-center gap-3 rounded-ctl px-3 text-left text-body font-medium transition-colors duration-fast
-          {category === c ? 'bg-raised text-fg' : 'text-fg-2 hover:bg-raised hover:text-fg'}"
-        onclick={() => (category = c)}
-      >
-        <Icon size={16} class={category === c ? 'text-accent' : ''} />
-        {c}
-      </button>
-    {/each}
-  </nav>
+<!-- One column: the page's name, and its preferences under it, at a
+     readable width. The navigation holds the pages. -->
+<header class="page-header">
+  <h1 class="min-w-0 flex-1 truncate font-display text-page font-semibold">{category}</h1>
+  {#if notice}
+    {#key notice.text}
+      <div class="said flex max-w-[60%] min-w-0 items-center gap-1 text-secondary {notice.error ? 'text-danger' : ''}" role="status" aria-live="polite">
+        <span class="truncate" title={notice.text}>{notice.text}</span>
+        {#if notice.action}
+          <button class="btn-text" onclick={notice.action.run}>{notice.action.label}</button>
+        {/if}
+        <button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss">
+          <X size={15} />
+        </button>
+      </div>
+    {/key}
+  {/if}
+</header>
 
-  <div class="min-w-0 flex-1 space-y-6 pb-10">
-    <h2 class="display-face text-page font-semibold">{category}</h2>
+<div class="min-h-0 flex-1 overflow-y-auto px-8 pb-12">
+    <div class="max-w-(--container-settings) space-y-9">
 
     {#if category === 'General'}
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Startup</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Startup</h2>
+        <div class="mt-2 flex flex-col">
           <Row title="Launch at login">
             <Toggle label="Launch at login" checked={settings.launch_at_login} onchange={(launch_at_login) => update({ launch_at_login })} />
           </Row>
@@ -290,9 +301,9 @@
           </Row>
         </div>
       </section>
-      <section class="space-y-2">
-        <h3 class="section-title px-1">When a clip is saved</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">When a clip is saved</h2>
+        <div class="mt-2 flex flex-col">
           <Row title="Show a notification">
             <Toggle label="Show a notification" checked={settings.notify_on_save} onchange={(notify_on_save) => update({ notify_on_save })} />
           </Row>
@@ -302,44 +313,43 @@
           {#if settings.sound_on_save}
             <Row title="Clip sound" description={soundName(settings.clip_sound)}>
               <div class="flex items-center gap-2">
-                <button class="btn h-9 w-9 px-0" onclick={() => previewSound('clip')} aria-label="Play the clip sound" title="Play">
-                  <Play size={15} />
+                <button class="btn-icon-sm" onclick={() => previewSound('clip')} aria-label="Play the clip sound" title="Play">
+                  <Play size={12} fill="currentColor" strokeWidth={0} />
                 </button>
                 {#if settings.clip_sound.kind === 'custom'}
-                  <button class="btn h-9" onclick={() => update({ clip_sound: { kind: 'builtin' } })}>Use default</button>
+                  <button class="btn-sm" onclick={() => update({ clip_sound: { kind: 'builtin' } })}>Use default</button>
                 {/if}
-                <button class="btn h-9" onclick={() => chooseSound('clip')}>Choose file…</button>
+                <button class="btn-sm" onclick={() => chooseSound('clip')}>Choose file…</button>
               </div>
             </Row>
             <Row title="Screenshot sound" description={screenshotSoundName(settings.screenshot_sound)}>
               <div class="flex items-center gap-2">
                 <button
-                  class="btn h-9 w-9 px-0"
+                  class="btn-icon-sm"
                   onclick={() => previewSound('screenshot')}
                   aria-label="Play the screenshot sound"
                   title="Play"
                 >
-                  <Play size={15} />
+                  <Play size={12} fill="currentColor" strokeWidth={0} />
                 </button>
                 {#if settings.screenshot_sound !== null}
-                  <button class="btn h-9" onclick={() => update({ screenshot_sound: null })}>Use default</button>
+                  <button class="btn-sm" onclick={() => update({ screenshot_sound: null })}>Use default</button>
                 {/if}
-                <button class="btn h-9" onclick={() => chooseSound('screenshot')}>Choose file…</button>
+                <button class="btn-sm" onclick={() => chooseSound('screenshot')}>Choose file…</button>
               </div>
             </Row>
             <Row title="Sound volume">
-              <div class="flex items-center gap-3">
-                <input
-                  type="range"
-                  min="0"
-                  max="200"
-                  step="5"
+              <div class="flex items-center gap-4">
+                <Fader
+                  label="Sound volume"
+                  class="w-36!"
                   value={settings.sound_volume}
-                  aria-label="Sound volume"
-                  class="w-36"
-                  style:--fill="{settings.sound_volume / 2}%"
-                  onchange={async (e) => {
-                    await update({ sound_volume: Number(e.currentTarget.value) })
+                  max={200}
+                  step={5}
+                  detent={100}
+                  text="{settings.sound_volume}%"
+                  onchange={async (v) => {
+                    await update({ sound_volume: v })
                     previewSound('clip')
                   }}
                 />
@@ -347,7 +357,7 @@
               </div>
             </Row>
             {#if soundError}
-              <div class="px-4 py-3 text-secondary text-danger" role="alert">{soundError}</div>
+              <div class="py-3 text-danger [overflow-wrap:anywhere]" role="alert">{soundError}</div>
             {/if}
           {/if}
           {#if status?.backend === 'windows'}
@@ -360,14 +370,14 @@
           {/if}
         </div>
       </section>
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Updates</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Updates</h2>
+        <div class="mt-2 flex flex-col">
           <Row title={support ? `Reruns ${support.version}` : 'Reruns'} description={updateText}>
             {#if available}
-              <button class="btn-primary h-9" onclick={onupdate}>Update…</button>
+              <button class="btn-primary" onclick={onupdate}>Update…</button>
             {:else}
-              <button class="btn h-9" disabled={!support?.configured || checking} onclick={checkNow}>
+              <button class="btn-sm" disabled={!support?.configured || checking} onclick={checkNow}>
                 {checking ? 'Checking…' : 'Check now'}
               </button>
             {/if}
@@ -382,18 +392,24 @@
           </Row>
         </div>
       </section>
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Troubleshooting</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Troubleshooting</h2>
+        <div class="mt-2 flex flex-col">
           <Row title="Logs" description={logError ?? undefined}>
-            <button class="btn h-9" onclick={openLogs} aria-label="Open the log folder">Open folder</button>
+            <button class="btn-sm" onclick={openLogs} aria-label="Open the log folder">Open folder</button>
           </Row>
         </div>
       </section>
     {:else if category === 'Recording'}
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Quality</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Quality</h2>
+        <p class="mt-1 text-secondary text-fg-2">
+          {lengthLabel(settings.replay_seconds)} ≈ <span class="text-fg tabular-nums">{bytes(clipBytes)}</span>, on disk and in RAM.
+          {#if clipBytes > 2e9}
+            <span class="text-warn">That’s a lot of RAM.</span>
+          {/if}
+        </p>
+        <div class="mt-2 flex flex-col">
           <Row title="Preset">
             <Segmented
               label="Preset"
@@ -416,18 +432,21 @@
             </select>
           </Row>
           <Row title="Bitrate">
-            <input
-              type="range"
-              min="5"
-              max="100"
-              step="5"
-              class="w-44"
-              style:--fill="{((settings.bitrate_kbps / 1000 - 5) / 95) * 100}%"
-              value={settings.bitrate_kbps / 1000}
-              onchange={(e) => update({ bitrate_kbps: Number(e.currentTarget.value) * 1000 })}
-              oninput={(e) => e.currentTarget.style.setProperty('--fill', `${((Number(e.currentTarget.value) - 5) / 95) * 100}%`)}
+            <Fader
+              label="Bitrate"
+              class="w-44!"
+              value={bitrateDraft ?? settings.bitrate_kbps / 1000}
+              min={5}
+              max={100}
+              step={5}
+              text="{bitrateDraft ?? settings.bitrate_kbps / 1000} Mbps"
+              oninput={(v) => (bitrateDraft = v)}
+              onchange={async (v) => {
+                await update({ bitrate_kbps: v * 1000 })
+                bitrateDraft = null
+              }}
             />
-            <span class="w-20 text-right text-body font-medium tabular-nums">{settings.bitrate_kbps / 1000} Mbps</span>
+            <span class="w-16 text-right tabular-nums">{bitrateDraft ?? settings.bitrate_kbps / 1000} Mbps</span>
           </Row>
           <Row
             title="Codec"
@@ -467,17 +486,14 @@
             </select>
           </Row>
         </div>
-        <p class="px-1 text-secondary text-muted">
-          {lengthLabel(settings.replay_seconds)} ≈ <span class="font-medium text-fg-2">{bytes(clipBytes)}</span>, on disk and in RAM.
-          {#if clipBytes > 2e9}
-            <span class="text-accent">That’s a lot of RAM.</span>
-          {/if}
-        </p>
       </section>
 
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Capture</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Capture</h2>
+        <p class="mt-1 text-secondary text-fg-2">
+          {status?.backend === 'windows' ? 'Changes apply from the next game.' : 'Changes apply from the next game; capture method after a restart.'}
+        </p>
+        <div class="mt-2 flex flex-col">
           <Row title="Replay length" description="Applies immediately.">
             <select
               class="field w-44"
@@ -551,21 +567,23 @@
             {/if}
           {/if}
           {#if status?.hdr}
+            <!-- 0: Windows didn't say (the display was asleep); 80 is assumed until it does. -->
+            {@const white = status.hdr.sdr_white_nits > 0 ? `SDR white ${Math.round(status.hdr.sdr_white_nits)} nits.` : 'SDR white unknown yet, 80 nits assumed.'}
             <Row
               title="HDR display"
               description={status.hdr_tonemapped
-                ? `SDR white ${Math.round(status.hdr.sdr_white_nits)} nits. Tone-mapped.`
-                : `SDR white ${Math.round(status.hdr.sdr_white_nits)} nits. Highlights blow out${status.backend === 'windows' ? ' without HDR compatibility' : ''}.`}
+                ? `${white} Tone-mapped.`
+                : `${white} Highlights blow out${status.backend === 'windows' ? ' without HDR compatibility' : ''}.`}
             />
           {/if}
           {#if settings.ignored_games.length}
             <Row title="Not games" description="Never recorded. Remove one to record it again.">
-              <div class="flex max-w-80 flex-wrap justify-end gap-1.5">
+              <div class="flex max-w-80 flex-wrap justify-end gap-2">
                 {#each settings.ignored_games as g, i (g.exe ?? g.name)}
-                  <span class="chip" title={g.exe ? `${g.exe}.exe` : g.name}>
-                    {g.name}
+                  <span class="inline-flex h-8 max-w-56 items-center rounded-ctl bg-raised pr-1 pl-3 text-secondary" title={g.exe ? `${g.exe}.exe` : g.name}>
+                    <span class="truncate">{g.name}</span>
                     <button
-                      class="ml-0.5 text-muted hover:text-fg"
+                      class="press ml-1 flex size-6 flex-none items-center justify-center rounded-chip text-fg-2 hover:bg-hover hover:text-fg"
                       aria-label="Detect {g.name} again"
                       onclick={() => update({ ignored_games: settings.ignored_games.filter((_, j) => j !== i) })}
                     >
@@ -583,20 +601,20 @@
                 ? 'Your desktop asks once.'
                 : undefined}
             >
-              <button class="btn {status.needs_screen ? 'border-accent/60 text-accent' : ''}" onclick={onchoosescreen}>
+              <button class={status.needs_screen ? 'btn-primary' : 'btn-sm'} onclick={onchoosescreen}>
                 {status.needs_screen ? 'Choose screen' : 'Change screen'}
               </button>
             </Row>
           {/if}
         </div>
-        <p class="px-1 text-secondary text-muted">
-          {status?.backend === 'windows' ? 'Changes apply from the next game.' : 'Changes apply from the next game; capture method after a restart.'}
-        </p>
       </section>
     {:else if category === 'Audio'}
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Sources</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Sources</h2>
+        <p class="mt-1 text-secondary text-fg-2">
+          Unplugged devices fall back to the default.
+        </p>
+        <div class="mt-2 flex flex-col">
           <Row title="Game and desktop audio">
             <Toggle label="Game and desktop audio" checked={settings.desktop_audio} onchange={(desktop_audio) => update({ desktop_audio })} />
           </Row>
@@ -651,13 +669,11 @@
             </div>
           </Row>
         </div>
-        <p class="px-1 text-secondary text-muted">
-          Unplugged devices fall back to the default.
-        </p>
       </section>
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Quality</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Quality</h2>
+        <p class="mt-1 text-secondary text-fg-2">Changes apply from the next game.</p>
+        <div class="mt-2 flex flex-col">
           <Row title="Audio bitrate" description="Per track.">
             <select
               class="field w-[140px]"
@@ -670,12 +686,14 @@
             </select>
           </Row>
         </div>
-        <p class="px-1 text-secondary text-muted">Changes apply from the next game.</p>
       </section>
     {:else if category === 'Hotkeys'}
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Clipping</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Clipping</h2>
+        {#if hotkeyBackend === 'kglobalaccel'}
+          <p class="mt-1 text-secondary text-fg-2">Also in System Settings → Shortcuts.</p>
+        {/if}
+        <div class="mt-2 flex flex-col">
           {#if hotkeyBackend !== null}
             <Row
               title="Clip that"
@@ -708,48 +726,46 @@
                 ? 'For scripts, Stream Deck or AutoHotkey.'
                 : 'Bind it to a key, or use it in scripts.'}
           >
-            <code class="rounded-ctl border border-line bg-canvas px-2.5 py-1.5 text-secondary text-fg-2" title="Also: rerunsctl screenshot, rerunsctl mark">rerunsctl save</code>
-            <button class="btn" onclick={copyCommand}>{copied ? 'Copied' : 'Copy'}</button>
+            <code class="flex h-8 items-center rounded-ctl border border-line-strong px-3 text-secondary text-fg-2 select-text"title="Also: rerunsctl screenshot, rerunsctl mark">rerunsctl save</code>
+            <button class="btn-sm" onclick={copyCommand}>{copied ? 'Copied' : 'Copy'}</button>
           </Row>
         </div>
-        {#if hotkeyBackend === 'kglobalaccel'}
-          <p class="px-1 text-secondary text-muted">Also in System Settings → Shortcuts.</p>
-        {/if}
       </section>
     {:else if category === 'Storage'}
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Location</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">Location</h2>
+        <div class="mt-2 flex flex-col">
           <Row title="Clips folder" description="One folder per game.">
-            <input class="field w-[280px] cursor-pointer" readonly value={settings.clips_dir} onclick={browse} title={settings.clips_dir} />
-            <button class="btn" onclick={browse}>Browse</button>
-            <button class="btn w-9 px-0" onclick={() => api.openFolder()} title="Open folder" aria-label="Open folder">
-              <FolderOpen size={16} />
+            <input class="field w-[260px] cursor-pointer truncate" readonly value={settings.clips_dir} onclick={browse} title={settings.clips_dir} />
+            <button class="btn-sm" onclick={browse}>Browse</button>
+            <button class="btn-icon-sm" onclick={() => api.openFolder()} title="Open folder" aria-label="Open folder">
+              <FolderOpen size={14} />
             </button>
           </Row>
           {#if usage && drive}
-            <div class="px-4 py-4">
-              <div class="flex items-baseline justify-between text-secondary">
-                <span class="font-medium text-fg">Drive</span>
+            <div class="py-3">
+              <div class="flex items-baseline justify-between">
+                <span class="text-fg">Drive</span>
                 <span class="text-muted tabular-nums">{bytes(usage.disk_free)} free of {bytes(usage.disk_total)}</span>
               </div>
-              <div class="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-line">
-                <div class="bg-accent" style:width="{Math.max(drive.clips, usage.clips_bytes ? 0.5 : 0)}%"></div>
-                <div class="bg-line-strong" style:width="{drive.other}%"></div>
+              <!-- Segments on a track: clips, everything else, and the track itself is what is free. -->
+              <div class="mt-2 flex h-2 gap-px overflow-hidden rounded-chip bg-raised">
+                <div class="bg-fg" style:width="{Math.max(drive.clips, usage.clips_bytes ? 0.5 : 0)}%"></div>
+                <div class="bg-faint" style:width="{drive.other}%"></div>
               </div>
-              <div class="mt-2.5 flex gap-5 text-caption text-muted">
-                <span class="flex items-center gap-1.5"><span class="size-2 rounded-xs bg-accent"></span>Clips · {bytes(usage.clips_bytes)}</span>
-                <span class="flex items-center gap-1.5"><span class="size-2 rounded-xs bg-line-strong"></span>Other files</span>
-                <span class="flex items-center gap-1.5"><span class="size-2 rounded-xs bg-line"></span>Free</span>
+              <div class="meta mt-2 flex gap-5">
+                <span class="flex items-center gap-1.5"><span class="size-2 rounded-[2px] bg-fg"></span>Clips, {bytes(usage.clips_bytes)}</span>
+                <span class="flex items-center gap-1.5"><span class="size-2 rounded-[2px] bg-faint"></span>Other files</span>
+                <span class="flex items-center gap-1.5"><span class="size-2 rounded-[2px] bg-raised"></span>Free</span>
               </div>
             </div>
           {/if}
         </div>
       </section>
 
-      <section class="space-y-2">
-        <h3 class="section-title px-1">File limits</h3>
-        <div class="card divide-y divide-line">
+      <section>
+        <h2 class="text-title font-semibold">File limits</h2>
+        <div class="mt-2 flex flex-col">
           <Row title="Storage limit" description="Oldest clips go first.">
             {#if limitChoice === 'custom'}
               <input
@@ -763,7 +779,7 @@
                   if (v >= 1) update({ storage_limit_gb: v })
                 }}
               />
-              <span class="text-secondary text-muted">GB</span>
+              <span class="text-muted">GB</span>
             {/if}
             <select class="field w-[140px]" value={limitChoice} onchange={(e) => chooseLimit(e.currentTarget.value)}>
               <option value="none">No limit</option>
@@ -786,12 +802,12 @@
             />
           </Row>
           <Row
-            title="Protect favourite clips"
-            description="Never remove favourites."
+            title="Protect favorites"
+            description="The limit never removes them."
             disabled={settings.storage_limit_gb == null}
           >
             <Toggle
-              label="Protect favourite clips"
+              label="Protect favorites"
               disabled={settings.storage_limit_gb == null}
               checked={settings.protect_favorites}
               onchange={(protect_favorites) => update({ protect_favorites })}
@@ -802,44 +818,70 @@
           </Row>
         </div>
       </section>
-    {:else if category === 'Appearance'}
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Theme</h3>
-        <div class="card divide-y divide-line">
-          <Row title="Accent colour">
-            <div class="flex items-center gap-2" role="radiogroup" aria-label="Accent colour">
-              {#each Object.entries(ACCENTS) as [id, a] (id)}
-                <button
-                  role="radio"
-                  aria-checked={prefs.accent === id}
-                  aria-label={a.label}
-                  title={a.label}
-                  class="flex size-7 items-center justify-center rounded-full text-on-accent ring-offset-2 ring-offset-panel transition-shadow duration-fast hover:ring-2 hover:ring-line-strong
-                    {prefs.accent === id ? 'ring-2 ring-white' : ''}"
-                  style:background={a.css}
-                  onclick={() => setPrefs({ accent: id as Accent })}
-                >
-                  {#if prefs.accent === id}<Check size={14} strokeWidth={3} />{/if}
-                </button>
-              {/each}
-            </div>
+    {:else if category === 'Sharing'}
+      <section>
+        <h2 class="text-title font-semibold">File size</h2>
+        <p class="mt-1 text-secondary text-fg-2">A clip over the limit is re-encoded to fit. The original stays as it is.</p>
+        <div class="mt-2 flex flex-col">
+          <Row title="Limit copied clips">
+            <Toggle label="Limit copied clips" checked={prefs.shareLimit} onchange={(shareLimit) => setPrefs({ shareLimit })} />
           </Row>
-          <Row title="Card size">
-            <Segmented
-              label="Card size"
-              value={prefs.density}
-              onchange={(density) => setPrefs({ density })}
-              options={[
-                { value: 'comfortable', label: 'Comfortable' },
-                { value: 'compact', label: 'Compact' },
-              ]}
+          <Row title="Maximum size" disabled={!prefs.shareLimit}>
+            {#if shareChoice === 'custom'}
+              <input
+                class="field w-20 text-right tabular-nums"
+                type="number"
+                min="1"
+                step="1"
+                aria-label="Maximum size in megabytes"
+                disabled={!prefs.shareLimit}
+                value={prefs.shareMaxMb}
+                onchange={(e) => {
+                  const v = Number(e.currentTarget.value)
+                  if (v >= 1) setPrefs({ shareMaxMb: v })
+                }}
+              />
+              <span class="text-muted">MB</span>
+            {/if}
+            <select
+              class="field w-[140px]"
+              aria-label="Maximum size"
+              disabled={!prefs.shareLimit}
+              value={shareChoice}
+              onchange={(e) => {
+                const v = e.currentTarget.value
+                customShare = v === 'custom'
+                if (!customShare) setPrefs({ shareMaxMb: Number(v) })
+              }}
+            >
+              {#each shareSizes as m (m)}
+                <option value={String(m)}>{m} MB</option>
+              {/each}
+              <option value="custom">Custom</option>
+            </select>
+          </Row>
+          <Row title="Limit saved clips too" disabled={!prefs.shareLimit}>
+            <Toggle
+              label="Limit saved clips too"
+              disabled={!prefs.shareLimit}
+              checked={prefs.shareLimitSave}
+              onchange={(shareLimitSave) => setPrefs({ shareLimitSave })}
             />
           </Row>
         </div>
       </section>
-      <section class="space-y-2">
-        <h3 class="section-title px-1">Motion</h3>
-        <div class="card divide-y divide-line">
+    {:else if category === 'Appearance'}
+      <section>
+        <h2 class="text-title font-semibold">Library</h2>
+        <div class="mt-2 flex flex-col">
+          <Row title="Tags" description="Tag clips and filter the library by tag.">
+            <Toggle label="Tags" checked={prefs.tagging} onchange={(tagging) => setPrefs({ tagging })} />
+          </Row>
+        </div>
+      </section>
+      <section>
+        <h2 class="text-title font-semibold">Motion</h2>
+        <div class="mt-2 flex flex-col">
           <Row title="Preview clips on hover">
             <Toggle label="Preview clips on hover" checked={prefs.hoverPreviews} onchange={(hoverPreviews) => setPrefs({ hoverPreviews })} />
           </Row>
@@ -849,5 +891,14 @@
         </div>
       </section>
     {/if}
-  </div>
+    </div>
 </div>
+
+<style>
+  .said {
+    transition: opacity var(--duration-normal) var(--ease-out);
+    @starting-style {
+      opacity: 0;
+    }
+  }
+</style>
