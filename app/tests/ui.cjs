@@ -483,7 +483,18 @@ async function runScenario(scenario, browser) {
     const days = await page.locator('main h2').allTextContents()
     // The newest clip is an hour old: yesterday's, just after midnight.
     assert.ok(['Today', 'Yesterday'].includes(days[0]), `newest day first: ${days}`)
-    assert.equal(new Set(days).size, days.length, 'one section per day')
+    assert.equal(new Set(days).size, days.length, 'one section per period')
+    // Recent periods, then months; a card says what its heading leaves out.
+    const f = await page.evaluate(async () => {
+      const { period, stamp } = await import('/src/lib/format.ts')
+      const now = new Date(2026, 10, 18, 12)
+      const at = (d, h = 9) => new Date(2026, 10, d, h).getTime()
+      return [period(at(18), now).label, period(at(17), now).label, period(at(13), now).label, period(at(11), now).label, period(new Date(2025, 9, 2).getTime(), now).label, stamp(at(13, 13), now), stamp(at(2), now)]
+    })
+    assert.deepEqual(f.slice(0, 4), ['Today', 'Yesterday', 'Past week', 'November'], `periods: ${f}`)
+    assert.match(f[4], /October 2025/, 'another year is named')
+    assert.match(f[5], /^\S+ 1:00\s?PM$|^\S+ 13:00$/, `a past-week card names its weekday: ${f[5]}`)
+    assert.doesNotMatch(f[6], /:/, `an older card names its date only: ${f[6]}`)
     assert.equal(await page.locator('main h1').first().innerText(), 'All clips', 'the heading identifies the listed collection')
     assert.ok((await page.locator('.library-toolbar').innerText()).includes('22 clips'), 'and how many')
     assert.equal(await libraryNav.getByRole('button', { name: 'All clips', exact: true }).getAttribute('aria-current'), 'page', 'opens on every clip')
@@ -536,10 +547,10 @@ async function runScenario(scenario, browser) {
     await page.keyboard.press('Escape')
     await viewOption(page, 'Newest first')
 
-    // Three clips to a row at this size; bigger thumbnails are fewer to a row; it is remembered.
+    // Four clips to a row at this size; bigger thumbnails are fewer to a row; it is remembered.
     const columns = () => page.locator('.clip-grid > *').evaluateAll((els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().x))).size)
     const cardWidth = () => page.locator('.clip-grid > *').first().evaluate((el) => el.getBoundingClientRect().width)
-    assert.equal(await columns(), 3, 'three medium columns at 1280')
+    assert.equal(await columns(), 4, 'four medium columns at 1280')
     const medium = await cardWidth()
     await viewOption(page, 'Large thumbnails')
     await page.waitForTimeout(100)
@@ -1528,7 +1539,7 @@ async function worstScenario(browser) {
   const long = page.locator('.clip-grid > *', { hasText: 'Aleksandra' })
   await viewOption(page, 'Largest first')
   await viewOption(page, 'Small thumbnails')
-  assert.ok(await long.locator('.card-details').evaluate((el) => el.scrollWidth <= el.clientWidth), 'small cards fit game, trim and marker metadata')
+  assert.ok(await long.locator('.card-caption').evaluate((el) => el.scrollWidth <= el.clientWidth && el.offsetHeight === 20), 'small cards fit title, game and trim on one line')
   assert.ok(await long.evaluate((el) => el.querySelector('.card-caption').getBoundingClientRect().top >= el.querySelector('.media-tools').getBoundingClientRect().bottom), 'long metadata stays separate from actions over the image')
   assert.ok(await long.locator('.card-caption').evaluate((el) => {
     const title = el.querySelector('.card-title')

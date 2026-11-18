@@ -1,14 +1,18 @@
 <!--
   The window's own strip, for a window without the system frame (Windows):
   32 px across the top that drags the window (double-click maximizes) and
-  ends in minimize / maximize / close. The current layout keeps app content
-  separate; this is not a requirement for future shell designs. Any shared
-  bar must preserve native window interactions. Renders nothing when the
+  ends in minimize / maximize / close. It carries on the colours under it
+  (the sidebar's, then the canvas's), so the content runs to the window's
+  top edge as in Windows 11's own apps, instead of sitting in a frame. Any
+  shared bar must preserve native window interactions. Renders nothing when the
   window keeps its own decorations (Linux), so the frame is never doubled.
   Close goes through the normal close request: hide to tray or quit, as set.
 -->
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window'
+
+  /** The sidebar is beside the content below (not a viewer over all of it). */
+  let { split = true }: { split?: boolean } = $props()
 
   const win = getCurrentWindow()
   // What it was last time, so the strip is there from the first paint.
@@ -40,7 +44,7 @@
 </script>
 
 {#if !framed}
-  <div class="flex h-chrome flex-none bg-nav" data-tauri-drag-region>
+  <div class={['strip flex h-chrome flex-none', { split }]} data-tauri-drag-region>
   <div class="flex-1" data-tauri-drag-region></div>
   <div class="flex flex-none" role="group" aria-label="Window">
     <button class="caption" onclick={() => win.minimize()} aria-label="Minimize" title="Minimize">
@@ -68,6 +72,10 @@
 {/if}
 
 <style>
+  .strip { background: var(--color-canvas); }
+  /* Two flat fills, sidebar then canvas: 228 px is LibraryNav's width. */
+  .strip.split { background: linear-gradient(to right, var(--color-nav) 228px, var(--color-canvas) 228px); }
+
   /* Sized and coloured like Windows 11's own caption buttons. */
   .caption {
     display: flex;

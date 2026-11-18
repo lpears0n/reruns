@@ -781,7 +781,7 @@
 
 <div class="app-shell flex h-full flex-col">
   <!-- Keep the native window contract independent of the capture controls. -->
-  <WindowControls />
+  <WindowControls split={!covered} />
 
   <div class="relative flex min-h-0 flex-1">
     <!-- A clip or screenshot open in its place: this can't be seen, clicked or tabbed to. -->

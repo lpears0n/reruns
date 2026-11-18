@@ -13,7 +13,7 @@
   import { bySession } from './sessions'
   import ClipCard from './ClipCard.svelte'
   import FirstRun from './FirstRun.svelte'
-  import { date, dayKey, dayLabel, gameName } from './format'
+  import { clock, date, dayKey, dayLabel, gameName, period, stamp, when } from './format'
   import Popover from './Popover.svelte'
   import { prefs, setPrefs, type Sort, type ThumbSize } from './prefs.svelte'
   import type { Scope } from './types'
@@ -92,12 +92,12 @@
     { value: 'longest', label: 'Longest first' },
     { value: 'largest', label: 'Largest first' },
   ]
-  /** Narrowest a card gets before the grid drops a column: three to a row
+  /** Narrowest a card gets before the grid drops a column: four to a row
    *  at 1280 to 1440 with the navigation open, at the middle size. */
   const SIZES: { value: ThumbSize; label: string; min: number; max: number }[] = [
-    { value: 'small', label: 'Small', min: 230, max: 280 },
-    { value: 'medium', label: 'Medium', min: 280, max: 420 },
-    { value: 'large', label: 'Large', min: 440, max: 600 },
+    { value: 'small', label: 'Small', min: 170, max: 240 },
+    { value: 'medium', label: 'Medium', min: 220, max: 340 },
+    { value: 'large', label: 'Large', min: 360, max: 520 },
   ]
   const minWidth = $derived(SIZES.find((s) => s.value === prefs.thumbSize)?.min ?? 300)
   const maxWidth = $derived(SIZES.find((s) => s.value === prefs.thumbSize)?.max ?? 380)
@@ -148,28 +148,30 @@
   // sort by something else has narrowed the list to clips.
   const byDay = $derived(sort === 'newest' || sort === 'oldest')
   const shots = $derived(scope !== 'starred' ? screenshots.filter((s) => !game || s.game === game.name) : [])
-  /** A game's clips: by the play session they were saved in (the default),
-   *  or by day as everywhere else. */
-  const grouping = $derived(prefs.grouping)
+  /** Recent periods and months by default: a few clips a day would leave
+   *  day sections mostly empty rows. By day, or a game's play sessions, on request. */
+  const groupBy = $derived(prefs.groupBy === 'session' && !game ? 'recent' : prefs.groupBy)
+  /** A card's time, as much as its section heading leaves unsaid. */
+  const timeOf = $derived(!byDay ? when : groupBy === 'recent' ? stamp : clock)
   type Item = { at: number } & ({ clip: Clip } | { shot: Screenshot })
   type Section = { key: string; label: string; range?: string; played: number; live?: boolean; items: Item[] }
   const path = (it: Item) => ('clip' in it ? it.clip.path : it.shot.path)
-  /** A local day with what was saved on it; one unnamed section when not sorted by time. */
+  /** A period (or day, or play session) with what was saved in it; one unnamed section when not sorted by time. */
   const sections = $derived.by(() => {
     const items: Item[] = shown.map((clip) => ({ at: clip.created_ms, clip }))
     if (!byDay) return items.length ? [{ key: 'all', label: '', played: 0, items }] : []
     if (!activeLabel && !query.trim()) items.push(...shots.map((shot) => ({ at: shot.modified_ms, shot })))
     items.sort((a, b) => (sort === 'oldest' ? a.at - b.at : b.at - a.at))
-    if (game && grouping === 'session') {
+    if (groupBy === 'session' && game) {
       const groups = bySession(items, (it) => it.at, game)
       if (sort === 'oldest') groups.reverse()
       return groups as Section[]
     }
     const days: Section[] = []
     for (const it of items) {
-      const key = dayKey(it.at)
+      const { key, label } = groupBy === 'day' ? { key: dayKey(it.at), label: dayLabel(it.at) } : period(it.at)
       if (days.at(-1)?.key !== key) {
-        days.push({ key, label: dayLabel(it.at), played: 0, items: [] })
+        days.push({ key, label, played: 0, items: [] })
       }
       days.at(-1)!.items.push(it)
     }
@@ -392,14 +394,13 @@
         {@render radio(prefs.thumbSize === s.value, `${s.label} thumbnails`, () => setPrefs({ thumbSize: s.value }))}
       {/each}
     </div>
-    {#if game}
-      <div class="menu-rule"></div>
-      <div role="group" aria-label="Group clips">
-        <div class="menu-label">Group</div>
-        {@render radio(grouping === 'session', 'By play session', () => setPrefs({ grouping: 'session' }))}
-        {@render radio(grouping === 'day', 'By day', () => setPrefs({ grouping: 'day' }))}
-      </div>
-    {/if}
+    <div class="menu-rule"></div>
+    <div role="group" aria-label="Group clips">
+      <div class="menu-label">Group</div>
+      {@render radio(groupBy === 'recent', 'Recent, then by month', () => setPrefs({ groupBy: 'recent' }))}
+      {@render radio(groupBy === 'day', 'By day', () => setPrefs({ groupBy: 'day' }))}
+      {#if game}{@render radio(groupBy === 'session', 'By play session', () => setPrefs({ groupBy: 'session' }))}{/if}
+    </div>
     {#if labels.length}
       <div class="menu-rule"></div>
       <div role="group" aria-label="Filter by tag">
@@ -463,7 +464,7 @@
             <ClipCard
               {clip}
               showGame={!game}
-              dated={!byDay}
+              {timeOf}
               selectable={selecting}
               selected={selected.has(clip.path)}
               copying={copyingPath === clip.path}
@@ -479,7 +480,7 @@
             />
           {:else}
             {@const shot = it.shot}
-            <ScreenshotCard {shot} selecting={selecting} {copyBlocked} copying={copyingPath === shot.path} copied={copiedPath === shot.path} showGame={!game} onopen={() => onshot(shot)} ondelete={() => ondelete(shot)} oncopy={() => oncopy(shot)} onmenu={(x, y) => menuFor(it, x, y)} />
+            <ScreenshotCard {shot} {timeOf} selecting={selecting} {copyBlocked} copying={copyingPath === shot.path} copied={copiedPath === shot.path} showGame={!game} onopen={() => onshot(shot)} ondelete={() => ondelete(shot)} oncopy={() => oncopy(shot)} onmenu={(x, y) => menuFor(it, x, y)} />
           {/if}
         {/snippet}
       </VirtualGrid>

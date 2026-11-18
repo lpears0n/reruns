@@ -35,15 +35,21 @@ stay fixed; only the games list scrolls, with the app's own scrollbar (never
 above capture and Settings, which line up with the navigation rows. Broken
 game covers fall back to an actual clip frame, then an initial.
 
+The window's own strip (Windows) carries on the sidebar's and canvas's
+colours, so the content runs to the top edge as in Windows 11's own apps
+rather than sitting in a frame; over an open clip it is all canvas.
+
 `ClipsView.svelte` owns one page header: current collection, count, search,
 View and occasional library actions. A game selection can narrow Favorites.
 The collection being browsed is distinct from the game named in capture.
 Choosing another collection starts at its newest clips. Sort and grouping
 are remembered between launches. An empty library shows no count or View.
 
-Clips are grouped by day by default, with screenshots among them by time
-(their game's when one is chosen; never in Favorites). Session grouping
-remains an explicit View option. Routine browsing does not show playtime totals, capture LEDs,
+Clips are grouped by recent periods, then months (Today, Yesterday, Past
+week, November, October 2025…): a library gains a few clips a day, and day
+sections left most rows empty. Four cards fit a row at 1280-1440 (medium).
+Screenshots sit among the clips by time (their game's when one is chosen;
+never in Favorites). By day, and a game's play sessions, remain View options. Routine browsing does not show playtime totals, capture LEDs,
 buffer meters, or readiness counters. Selection actions appear only during
 selection.
 
@@ -62,9 +68,12 @@ telemetry; full diagnostics and recording settings remain in the options.
 ## Media and feedback
 
 Clip and screenshot cards use the same measured frame/caption geometry.
-The image opens the item. The time always ends the first line, so a row's
-times line up; the second line holds the game (when the title is not it),
-Trimmed, and marked moments. Copy and More are on the image, revealed on
+The image opens the item. The caption is one 20px line: a name the user
+gave in semibold, an unnamed clip's game in quiet regular type, then (room
+permitting) the game after a name, Trimmed, the favorite star, and the time
+at the end, as much of it as the section heading leaves unsaid ("4:58 PM",
+"Mon 4:58 PM", "Nov 10"). Marked moments are the diamonds under the image.
+Everything is in the caption's tooltip. Copy and More are on the image, revealed on
 pointer hover or keyboard focus, and always available on touch. Do not move
 or scale the card to reveal them. Copy reads Copy, then Copied, in the same
 width; while a large clip is prepared its foot line fills with the progress

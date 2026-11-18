@@ -14,7 +14,7 @@
   let {
     clip,
     showGame = true,
-    dated = false,
+    timeOf = clock,
     selectable = false,
     selected = false,
     copying = false,
@@ -31,8 +31,8 @@
     clip: Clip
     /** Name the game; off where the list is one game's. */
     showGame?: boolean
-    /** The grid isn't in dated sections: say the day with the time. */
-    dated?: boolean
+    /** Its time, as much as the section heading above leaves unsaid. */
+    timeOf?: (ms: number) => string
     /** Selection mode: clicking toggles selection instead of opening. */
     selectable?: boolean
     selected?: boolean
@@ -54,7 +54,7 @@
   } = $props()
 
   const game = $derived(gameName(clip.game))
-  const time = $derived(dated ? when(clip.created_ms) : clock(clip.created_ms))
+  const time = $derived(timeOf(clip.created_ms))
   // Its title; in a list of every game, the game; in one game's list, where
   // every card would say the same, when it was saved.
   const title = $derived(clip.title ?? (showGame ? game : time))
@@ -126,8 +126,8 @@
 
   // The time always sits at the end of the first line, so a row's times
   // line up; the second line is what else is true of the clip.
-  const flags = $derived([clip.is_edit && 'Trimmed', moments.length && `${moments.length} marked`].filter((f): f is string => !!f))
-  const details = $derived([subtitle, ...flags].filter(Boolean).join(', '))
+  /** Everything the one caption line says, for its tooltip. */
+  const details = $derived([title, subtitle, clip.is_edit && 'Trimmed', moments.length && `${moments.length} marked`, title !== time && when(clip.created_ms)].filter(Boolean).join(', '))
 
   function more(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -230,22 +230,16 @@
   <div class="moments media-visual" aria-hidden="true">
     {#each moments as m, i (i)}<i style:left="{m * 100}%"></i>{/each}
   </div>
-  <div class="card-caption">
-    <div class="caption-identity">
-      <div class="caption-line">
-        <div class="card-title truncate" title={title}>{title}</div>
-        {#if clip.favorite && !selectable}
-          <Star size={11} fill="currentColor" class="favorite-mark flex-none text-fg-2" aria-hidden="true" />
-        {/if}
-        {#if title !== time}<span class="caption-time text-muted tabular-nums">{time}</span>{/if}
-      </div>
-      {#if details}
-        <div class="card-details text-secondary text-muted" title={details}>
-          {#if subtitle}<span class="detail-label truncate">{subtitle}</span>{/if}
-          {#each flags as flag (flag)}<span class="detail-flag">{flag}</span>{/each}
-        </div>
-      {/if}
-    </div>
+  <!-- One line: a name the user gave stands out; an unnamed clip is quiet.
+       The game gives way before the title; marks are the diamonds above. -->
+  <div class="card-caption" title={details}>
+    <div class="card-title truncate" class:named={!!clip.title}>{title}</div>
+    {#if subtitle}<span class="caption-game truncate">{subtitle}</span>{/if}
+    {#if clip.is_edit}<span class="caption-flag">Trimmed</span>{/if}
+    {#if clip.favorite && !selectable}
+      <Star size={11} fill="currentColor" class="favorite-mark flex-none text-fg-2" aria-hidden="true" />
+    {/if}
+    {#if title !== time}<span class="caption-time text-muted tabular-nums">{time}</span>{/if}
   </div>
 </div>
 
@@ -260,36 +254,21 @@
 
   .card-caption {
     display: flex;
-    align-items: flex-start;
-    height: 40px;
-  }
-
-  .caption-identity {
-    min-width: 0;
-    flex: 1;
-  }
-
-  .caption-line {
-    display: flex;
     min-width: 0;
     align-items: center;
     gap: 6px;
+    height: 20px;
     line-height: 20px;
   }
 
-  .card-title { min-width: 0; font-weight: 500; }
+  .card-title { flex: 0 1 auto; min-width: 0; color: var(--color-fg-2); }
+  .card-title.named { color: var(--color-fg); font-weight: 600; }
+  /* Gives way long before the title does; a card too narrow for both keeps
+     the name the user gave (the game stays in the tooltip). */
+  .caption-game { flex: 0 1000 auto; min-width: 0; color: var(--color-muted); font-size: var(--text-secondary); }
+  @container (width < 300px) { .caption-game { display: none; } }
+  .caption-flag { flex: none; color: var(--color-muted); font-size: var(--text-caption); }
   .caption-time { margin-left: auto; flex: none; padding-left: 8px; font-size: 12px; }
-
-  .card-details {
-    display: flex;
-    min-width: 0;
-    gap: 10px;
-    margin-top: 2px;
-    line-height: 18px;
-  }
-
-  .detail-label { min-width: 0; }
-  .detail-flag { flex: none; }
 
   /* Marked moments: small white diamonds standing on the picture's foot. */
   .moments {

@@ -9,6 +9,7 @@
   let {
     shot,
     showGame = true,
+    timeOf = clock,
     selecting = false,
     copying = false,
     copied = false,
@@ -20,6 +21,8 @@
   }: {
     shot: Screenshot
     showGame?: boolean
+    /** Its time, as much as the section heading above leaves unsaid. */
+    timeOf?: (ms: number) => string
     /** Clips are being picked: a screenshot is not one of them. */
     selecting?: boolean
     copying?: boolean
@@ -78,17 +81,11 @@
       {/if}
     </div>
   </div>
-  <!-- Same 12px picture gap and 40px caption as a clip, regardless of title. -->
-  <div class="card-caption">
-    <div class="caption-identity">
-      <div class="caption-line">
-        <div class="card-title truncate" title={showGame ? gameName(shot.game) : 'Screenshot'}>{showGame ? gameName(shot.game) : 'Screenshot'}</div>
-        <span class="caption-time text-muted tabular-nums">{clock(shot.modified_ms)}</span>
-      </div>
-      <div class="card-details text-secondary text-muted tabular-nums" title="Screenshot, {clock(shot.modified_ms)}, {bytes(shot.size)}">
-        {#if showGame}<span>Screenshot</span>{/if}<span class="min-w-0 truncate">{bytes(shot.size)}</span>
-      </div>
-    </div>
+  <!-- Same 12px picture gap and one 20px caption line as a clip. -->
+  <div class="card-caption" title="{showGame ? `${gameName(shot.game)}, ` : ''}Screenshot, {when(shot.modified_ms)}, {bytes(shot.size)}">
+    <div class="card-title truncate">{showGame ? gameName(shot.game) : 'Screenshot'}</div>
+    {#if showGame}<span class="caption-flag">Screenshot</span>{/if}
+    <span class="caption-time text-muted tabular-nums">{timeOf(shot.modified_ms)}</span>
   </div>
 </div>
 
@@ -107,32 +104,15 @@
 
   .card-caption {
     display: flex;
-    align-items: flex-start;
-    height: 40px;
-    margin-top: 12px;
-  }
-
-  .caption-line {
-    display: flex;
     min-width: 0;
     align-items: center;
     gap: 6px;
+    height: 20px;
+    margin-top: 12px;
     line-height: 20px;
   }
 
-  .card-title { min-width: 0; font-weight: 500; }
+  .card-title { flex: 0 1 auto; min-width: 0; color: var(--color-fg-2); }
+  .caption-flag { flex: none; color: var(--color-muted); font-size: var(--text-caption); }
   .caption-time { margin-left: auto; flex: none; padding-left: 8px; font-size: 12px; }
-
-  .caption-identity {
-    min-width: 0;
-    flex: 1;
-  }
-
-  .card-details {
-    display: flex;
-    min-width: 0;
-    gap: 8px;
-    margin-top: 2px;
-    line-height: 18px;
-  }
 </style>

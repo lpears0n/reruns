@@ -23,9 +23,10 @@ export interface Prefs {
   shareLimitSave: boolean
   /** The size to fit under, in megabytes. */
   shareMaxMb: number
-  /** The library's order, and how a game's clips are grouped. */
+  /** The library's order, and how it is grouped: by recent periods and
+   *  months, by day, or (a game's clips) by play session. */
   sort: Sort
-  grouping: 'session' | 'day'
+  groupBy: 'recent' | 'day' | 'session'
 }
 
 const KEY = 'reruns/prefs'
@@ -41,7 +42,7 @@ const DEFAULTS: Prefs = {
   shareLimitSave: false,
   shareMaxMb: 10,
   sort: 'newest',
-  grouping: 'day',
+  groupBy: 'recent',
 }
 
 function load(): Prefs {

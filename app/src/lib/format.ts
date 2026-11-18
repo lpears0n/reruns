@@ -155,6 +155,32 @@ export function dayLabel(ms: number, now = new Date()): string {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' })
 }
 
+const daysAgo = (ms: number, now: Date) => {
+  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  return Math.round((start(now) - start(new Date(ms))) / 86400000)
+}
+
+/** A coarse period, for a library that gains a few clips a day: Today,
+ *  Yesterday, Past week, then each month ("November", "October 2025"). */
+export function period(ms: number, now = new Date()): { key: string; label: string } {
+  const days = daysAgo(ms, now)
+  if (days <= 0) return { key: 'today', label: 'Today' }
+  if (days === 1) return { key: 'yesterday', label: 'Yesterday' }
+  if (days < 7) return { key: 'week', label: 'Past week' }
+  const d = new Date(ms)
+  return { key: `${d.getFullYear()}-${d.getMonth()}`, label: d.toLocaleDateString(undefined, { month: 'long', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' }) }
+}
+
+/** When, inside its period: "15:58" today and yesterday, "Mon 15:58" in
+ *  the past week, "Nov 3" further back. */
+export function stamp(ms: number, now = new Date()): string {
+  const days = daysAgo(ms, now)
+  if (days <= 1) return clock(ms)
+  const d = new Date(ms)
+  if (days < 7) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${clock(ms)}`
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
 /** When something happened, as people say it: "Today, 15:58",
  *  "Yesterday, 09:12", "Tuesday, 21:40", "November 3, 18:05". */
 export function when(ms: number, now = new Date()): string {
