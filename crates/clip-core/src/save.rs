@@ -140,9 +140,14 @@ pub fn write_mp4(clip: &Clip, path: &Path) -> Result<()> {
     mux.link(&sink)?;
 
     let codec = Codec::from_caps(&clip.video.caps).context("unknown video codec")?;
-    let mut srcs = vec![add_track(&pipeline, &mux, &clip.video, codec.parser())?];
+    // The recorder's av1parse already left AV1 in the temporal units mp4mux
+    // takes. A second one would announce its default tier=main before the
+    // sequence header and the real tier after it, a caps change mp4mux
+    // refuses mid-file (not-negotiated) whenever the stream is high tier.
+    let video_parser = (codec != Codec::Av1).then(|| codec.parser());
+    let mut srcs = vec![add_track(&pipeline, &mux, &clip.video, video_parser)?];
     for track in &clip.audio {
-        srcs.push(add_track(&pipeline, &mux, track, "aacparse")?);
+        srcs.push(add_track(&pipeline, &mux, track, Some("aacparse"))?);
     }
 
     // The appsrcs are unbounded, so every packet can be queued up front;
@@ -183,7 +188,7 @@ fn add_track(
     pipeline: &gst::Pipeline,
     mux: &gst::Element,
     track: &ClipTrack,
-    parser: &str,
+    parser: Option<&str>,
 ) -> Result<gst_app::AppSrc> {
     if track.buffers.is_empty() {
         bail!("empty track");
@@ -193,10 +198,17 @@ fn add_track(
         .format(gst::Format::Time)
         .max_bytes(0)
         .build();
-    let parse = gst::ElementFactory::make(parser).build()?;
-    pipeline.add_many([src.upcast_ref(), &parse])?;
-    src.link(&parse)?;
-    parse.link(mux)?;
+    pipeline.add(&src)?;
+    match parser {
+        Some(name) => {
+            let parse = gst::ElementFactory::make(name).build()?;
+            pipeline.add(&parse)?;
+            src.link(&parse)?;
+            parse.link(mux)?;
+        }
+        // Only AV1 video goes unparsed; `link` alone would pick an audio pad.
+        None => src.link_pads(None, mux, Some("video_%u"))?,
+    }
     Ok(src)
 }
 
