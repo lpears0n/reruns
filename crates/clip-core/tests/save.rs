@@ -377,7 +377,9 @@ fn renders_vertical_with_slow_motion() {
     remove_test_dir(&dir);
 }
 
-/// Every codec the machine can hardware-encode survives ring → MP4.
+/// Every codec the machine can hardware-encode survives ring → MP4. At
+/// 120 fps and 50 Mb/s NVENC's AV1 is high tier, which needs the save to
+/// keep the caps the recorder's parser found.
 #[test]
 fn saves_every_supported_codec() {
     use clip_core::Codec;
@@ -389,13 +391,13 @@ fn saves_every_supported_codec() {
             continue;
         };
         let cfg = VideoConfig {
-            fps: 60,
-            bitrate_kbps: 100_000,
+            fps: 120,
+            bitrate_kbps: 50_000,
             codec,
         };
         let pipeline = gst::Pipeline::new();
         let src = gst::ElementFactory::make("videotestsrc")
-            .property("num-buffers", 180i32)
+            .property("num-buffers", 360i32)
             .property_from_str("pattern", "ball")
             .build()
             .unwrap();
@@ -406,7 +408,7 @@ fn saves_every_supported_codec() {
                     .field("format", "BGRx")
                     .field("width", 1280i32)
                     .field("height", 720i32)
-                    .field("framerate", gst::Fraction::new(60, 1))
+                    .field("framerate", gst::Fraction::new(cfg.fps as i32, 1))
                     .build(),
             )
             .build()
