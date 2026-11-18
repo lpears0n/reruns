@@ -3,6 +3,7 @@
   import type { Snippet } from 'svelte'
   import type { Clip, GameEntry, UpdateInfo } from './api'
   import Art from './Art.svelte'
+  import Brand from './Brand.svelte'
   import { gameName } from './format'
   import type { Scope } from './types'
   import { CATEGORIES, type Category } from './SettingsView.svelte'
@@ -32,8 +33,7 @@
 
 <aside class="library-sidebar" aria-label="Reruns">
   <button class="brand" onclick={onback} aria-label="Reruns library">
-    <img class="brand-mark" src="/brand-mark.svg" alt="" draggable="false" />
-    <img class="brand-wordmark" src="/brand-wordmark.svg" alt="Reruns" draggable="false" />
+    <Brand />
   </button>
 
   {#if settings}
@@ -92,9 +92,7 @@
 
 <style>
   .library-sidebar { display: flex; flex: none; flex-direction: column; width: 228px; min-height: 0; background: var(--color-nav); }
-  .brand { display: flex; flex: none; align-items: center; gap: 12px; height: 88px; padding: 0 24px; text-align: left; }
-  .brand-mark { width: 28px; height: 28px; object-fit: contain; }
-  .brand-wordmark { width: 124px; height: 27px; object-fit: contain; object-position: left center; }
+  .brand { display: flex; flex: none; align-items: center; height: 88px; padding: 0 24px; text-align: left; }
   /* The app's own scrollbar (app.css); `scrollbar-width` would swap in the system's. */
   .sidebar-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px; }
   .library-navigation { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 12px; }

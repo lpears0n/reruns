@@ -25,7 +25,7 @@
   import { bytes } from './format'
   import HotkeyBinder from './HotkeyBinder.svelte'
   import LevelMeter from './LevelMeter.svelte'
-  import { prefs, setPrefs } from './prefs.svelte'
+  import { prefs, setPrefs, type Theme } from './prefs.svelte'
   import {
     CODEC_LABEL,
     ENCODER_LABEL,
@@ -39,6 +39,15 @@
   import Segmented from './Segmented.svelte'
   import type { Notice } from './types'
   import Toggle from './Toggle.svelte'
+
+  const THEMES: { value: Theme; label: string }[] = [
+    { value: 'offwhite', label: 'Off-white' },
+    { value: 'blue', label: 'Blue' },
+    { value: 'mint', label: 'Mint' },
+    { value: 'violet', label: 'Violet' },
+    { value: 'pink', label: 'Pink' },
+    { value: 'rainbow', label: 'Rainbow' },
+  ]
 
   let {
     settings,
@@ -873,6 +882,26 @@
       </section>
     {:else if category === 'Appearance'}
       <section>
+        <h2 class="text-title font-semibold">Theme</h2>
+        <div class="mt-2 flex flex-col">
+          <Row title="Accent" description={THEMES.find((t) => t.value === prefs.theme)?.label}>
+            <div class="flex gap-2" role="radiogroup" aria-label="Theme">
+              {#each THEMES as t (t.value)}
+                <button
+                  role="radio"
+                  aria-checked={prefs.theme === t.value}
+                  aria-label={t.label}
+                  title={t.label}
+                  class="swatch"
+                  data-theme={t.value}
+                  onclick={() => setPrefs({ theme: t.value })}
+                ></button>
+              {/each}
+            </div>
+          </Row>
+        </div>
+      </section>
+      <section>
         <h2 class="text-title font-semibold">Library</h2>
         <div class="mt-2 flex flex-col">
           <Row title="Tags" description="Tag clips and filter the library by tag.">
@@ -896,6 +925,21 @@
 </div>
 
 <style>
+  /* Its data-theme sets --t-accent here (tokens.css), so it shows that theme's colour. */
+  .swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-ctl);
+    background: var(--t-accent);
+    outline-offset: 2px;
+  }
+  .swatch[data-theme='rainbow'] {
+    background: linear-gradient(135deg, #ff7a7a, #ffd36e, #7ee08f, #6ec8ff, #b48cff);
+  }
+  /* Inside the swatch, so the focus outline outside it stays distinct. */
+  .swatch[aria-checked='true'] {
+    box-shadow: inset 0 0 0 3px var(--color-canvas);
+  }
   .said {
     transition: opacity var(--duration-normal) var(--ease-out);
     @starting-style {

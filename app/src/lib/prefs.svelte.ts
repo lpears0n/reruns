@@ -3,8 +3,12 @@
 
 export type ThumbSize = 'small' | 'medium' | 'large'
 export type Sort = 'newest' | 'oldest' | 'longest' | 'largest'
+/** The accent colour (tokens.css); rainbow keeps offwhite controls and
+ *  animates the rr mark and wordmark (Brand.svelte). */
+export type Theme = 'offwhite' | 'blue' | 'mint' | 'violet' | 'pink' | 'rainbow'
 
 export interface Prefs {
+  theme: Theme
   /** Play a muted preview when the pointer rests on a clip card. */
   hoverPreviews: boolean
   /** Shorten or disable transitions and animations. */
@@ -32,6 +36,7 @@ export interface Prefs {
 const KEY = 'reruns/prefs'
 
 const DEFAULTS: Prefs = {
+  theme: 'offwhite',
   hoverPreviews: true,
   reduceMotion: false,
   thumbSize: 'medium',
@@ -71,4 +76,7 @@ export function applyPrefs(p: Prefs) {
   const root = document.documentElement
   const systemReduce = matchMedia('(prefers-reduced-motion: reduce)').matches
   root.toggleAttribute('data-reduce-motion', p.reduceMotion || systemReduce)
+  // No attribute for the default, so its look comes from :root alone.
+  if (p.theme === 'offwhite') root.removeAttribute('data-theme')
+  else root.setAttribute('data-theme', p.theme)
 }

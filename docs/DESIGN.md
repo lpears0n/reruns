@@ -26,6 +26,13 @@ custom outlined lowercase **reruns** wordmark.
 Keep pixel styling in the identity; interface text remains readable system
 type. Do not introduce another logo concept or arbitrary accent colour.
 
+Settings → Appearance → Theme is the user's choice of accent: Off-white
+(the default), Blue, Mint, Violet, Pink (`tokens.css`, `data-theme` on
+`<html>`), or Rainbow, which keeps off-white controls. `Brand.svelte` draws
+the mark and wordmark inline: a colour theme tints the mark with its
+accent; Rainbow gives the eight glyphs one rainbow, turns its hue and
+wiggles the letters in a wave.
+
 ## Composition
 
 `LibraryNav.svelte` owns the 228px collection sidebar: identity, All clips,
@@ -119,6 +126,10 @@ arrived. Everything else is opacity or colour.
 
 Budget: routine motion 200ms or less, transform and opacity only (the
 flight's single ghost excepted), no loops, nothing on every card at once.
+The one loop is the opt-in Rainbow wordmark: a `hue-rotate` filter and
+transforms only (8 ms of main-thread work per 5 s in Edge at 240 Hz;
+animating `fill` cost about 15% of a core), and it stops while the window
+lacks focus or motion is reduced.
 Reduced motion (system or Appearance) keeps every state change but nothing
 travels: arrivals ring the card instead.
 
@@ -133,7 +144,7 @@ Tokens live in `app/src/tokens.css`; the app and in-game overlay share them.
 | Controls | #232424 |
 | Menus and feedback | #2b2c2c |
 | Main text | #f1f0eb |
-| Main action / focus | #e4e5df |
+| Main action / focus | #e4e5df (or the theme's accent) |
 | Control corners | 3px |
 | Media / menu corners | 4px |
 | Workspace corners | 0px |
@@ -142,7 +153,8 @@ Use the system typeface at readable sizes: 14px body, 13px supporting text,
 12px compact metadata. The collection title is 24px. Do not apply the pixel
 wordmark's lettering to navigation or metadata.
 
-The user's constraints are explicit: no orange/purple/blue decorative theme,
+The user's constraints are explicit: no orange/purple/blue decorative theme
+by default (accent themes change only the accent, and only when chosen),
 pill navigation, oversized rounded panels, bubbles, status LEDs, readiness
 counters, or unnecessary explanatory wording. Error and destructive-action
 colours still communicate actual consequences.

@@ -73,3 +73,11 @@
   --t-duration-fast: 120ms;
   --t-duration-normal: 180ms;
 }
+
+/* Settings → Appearance → Theme (prefs.theme on <html>; a settings swatch
+   carries the same attribute to show its colour). A theme swaps only the
+   accent, kept light enough for --t-on-accent text. */
+[data-theme='blue'] { --t-accent: #8db7ff; --t-accent-hover: #b3cdff; }
+[data-theme='mint'] { --t-accent: #86dcb0; --t-accent-hover: #aae8c8; }
+[data-theme='violet'] { --t-accent: #b8a3ff; --t-accent-hover: #d0c2ff; }
+[data-theme='pink'] { --t-accent: #ff9ccb; --t-accent-hover: #ffbddc; }
