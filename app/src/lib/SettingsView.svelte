@@ -638,7 +638,11 @@
                 aria-label="Output device"
                 disabled={!settings.desktop_audio}
                 value={settings.desktop_device ?? ''}
-                onchange={(e) => update({ desktop_device: e.currentTarget.value || null })}
+                onchange={(e) => {
+                  const id = e.currentTarget.value || null
+                  // The name too: Windows can give the device a new id.
+                  update({ desktop_device: id, desktop_device_name: caps?.output_devices.find((d) => d.id === id)?.name ?? null })
+                }}
               >
                 <option value="">System default</option>
                 {#each caps?.output_devices ?? [] as d (d.id)}
@@ -663,7 +667,10 @@
                 aria-label="Input device"
                 disabled={!settings.mic}
                 value={settings.mic_device ?? ''}
-                onchange={(e) => update({ mic_device: e.currentTarget.value || null })}
+                onchange={(e) => {
+                  const id = e.currentTarget.value || null
+                  update({ mic_device: id, mic_device_name: caps?.mic_devices.find((d) => d.id === id)?.name ?? null })
+                }}
               >
                 <option value="">System default</option>
                 {#each caps?.mic_devices ?? [] as d (d.id)}

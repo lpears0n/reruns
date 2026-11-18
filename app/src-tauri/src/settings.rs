@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clip_core::{
-    Action, AudioSource, Binding, Codec, Encoder, RecorderConfig, VideoConfig, auto::Backend,
-    game::IgnoredGame,
+    Action, AudioDevice, AudioSource, Binding, Codec, Encoder, RecorderConfig, VideoConfig,
+    auto::Backend, game::IgnoredGame,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -62,9 +62,13 @@ pub struct Settings {
     /// Output whose sound is recorded (PipeWire node name / WASAPI id);
     /// `None` = the system default output, followed when it changes.
     pub desktop_device: Option<String>,
+    /// That output's name, to find it again under a new id.
+    pub desktop_device_name: Option<String>,
     pub mic: bool,
     /// PipeWire node name; `None` = system default input.
     pub mic_device: Option<String>,
+    /// That input's name, to find it again under a new id.
+    pub mic_device_name: Option<String>,
     pub audio_bitrate_kbps: u32,
 
     /// Capture backend: `None` = KWin window capture when available, else the
@@ -132,8 +136,10 @@ impl Default for Settings {
             ignored_games: Vec::new(),
             desktop_audio: true,
             desktop_device: None,
+            desktop_device_name: None,
             mic: false,
             mic_device: None,
+            mic_device_name: None,
             audio_bitrate_kbps: 160,
             capture_backend: None,
             hotkey: "F8".into(),
@@ -213,6 +219,26 @@ impl Settings {
         save_to(self, &Self::path())
     }
 
+    /// Point the saved audio devices at the ids they have now (see
+    /// [`clip_core::find_device`]), noting each one's name for next time.
+    /// Returns whether anything changed.
+    pub fn follow_audio_devices(&mut self) -> bool {
+        // Listing devices takes a moment; only the kinds with one saved.
+        let outputs = match self.desktop_device {
+            Some(_) => clip_core::output_devices(),
+            None => vec![],
+        };
+        let inputs = match self.mic_device {
+            Some(_) => clip_core::input_devices(),
+            None => vec![],
+        };
+        follow(
+            &mut self.desktop_device,
+            &mut self.desktop_device_name,
+            &outputs,
+        ) | follow(&mut self.mic_device, &mut self.mic_device_name, &inputs)
+    }
+
     pub fn recorder_config(&self) -> RecorderConfig {
         let mut audio = Vec::new();
         if self.desktop_audio {
@@ -269,6 +295,31 @@ impl Settings {
     }
 }
 
+/// Point a saved device (`id`, `name`) at what it is in `devices`; a
+/// device that isn't there is left as it is. Returns whether it changed.
+fn follow(id: &mut Option<String>, name: &mut Option<String>, devices: &[AudioDevice]) -> bool {
+    let Some(saved) = id.as_deref() else {
+        return false;
+    };
+    let Some(now) = clip_core::find_device(devices, saved, name.as_deref()) else {
+        return false;
+    };
+    if now.id == saved && name.as_deref() == Some(now.name.as_str()) {
+        return false;
+    }
+    if now.id != saved {
+        tracing::info!(
+            old = saved,
+            new = %now.id,
+            name = %now.name,
+            "audio device has a new id; following it"
+        );
+    }
+    *id = Some(now.id.clone());
+    *name = Some(now.name.clone());
+    true
+}
+
 fn save_to(settings: &Settings, path: &Path) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -297,6 +348,29 @@ mod tests {
             serde_json::to_value(back).unwrap(),
             serde_json::to_value(Settings::default()).unwrap()
         );
+    }
+
+    #[test]
+    fn saved_devices_follow_a_new_id() {
+        let devices = [AudioDevice {
+            id: "{new}".into(),
+            name: "SteelSeries Sonar - Stream".into(),
+        }];
+        let some = |s: &str| Some(s.to_string());
+        // A new id under the saved name is followed.
+        let (mut id, mut name) = (some("{old}"), some("SteelSeries Sonar - Stream"));
+        assert!(follow(&mut id, &mut name, &devices));
+        assert_eq!(id, some("{new}"));
+        // Found by id, the name is filled in for settings saved without it.
+        let mut name = None;
+        assert!(follow(&mut id, &mut name, &devices));
+        assert_eq!(name, some("SteelSeries Sonar - Stream"));
+        // Then nothing changes again.
+        assert!(!follow(&mut id, &mut name, &devices));
+        // A device that isn't there stays saved; the default stands in for it.
+        let (mut id, mut name) = (some("{gone}"), some("Headset"));
+        assert!(!follow(&mut id, &mut name, &devices));
+        assert_eq!((id, name), (some("{gone}"), some("Headset")));
     }
 
     #[test]

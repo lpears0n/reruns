@@ -145,7 +145,10 @@ export interface Settings {
   desktop_audio: boolean
   /** Output whose sound is recorded; null = the system default. */
   desktop_device: string | null
+  /** Its name, to find it again if its id changes. */
+  desktop_device_name: string | null
   mic_device: string | null
+  mic_device_name: string | null
   audio_bitrate_kbps: number
   storage_limit_gb: number | null
   protect_edits: boolean

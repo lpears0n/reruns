@@ -1031,6 +1031,17 @@ pub fn run() {
     if let Err(e) = clip_core::init() {
         logging::fatal(&format!("GStreamer failed to initialise: {e:#}"));
     }
+    // Following moved audio devices lists them, about half a second each:
+    // alongside Tauri's own start rather than before the window shows.
+    let settings = std::thread::spawn(|| {
+        let mut settings = Settings::load();
+        if settings.follow_audio_devices()
+            && let Err(e) = settings.save()
+        {
+            tracing::warn!("couldn't save the audio devices' new ids: {e:#}");
+        }
+        settings
+    });
 
     let context = tauri::generate_context!();
     let builder = tauri::Builder::default()
@@ -1063,7 +1074,7 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
-            let settings = Settings::load();
+            let settings = settings.join().unwrap_or_else(|_| Settings::load());
             let media = tauri::async_runtime::block_on(media_server::MediaServer::start())?;
             let token_path = dirs::data_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
