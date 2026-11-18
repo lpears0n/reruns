@@ -157,6 +157,24 @@ fn saves_last_n_seconds_as_mp4() {
         "sprite is not {:?}",
         info.format
     );
+    // A picked cover: the exact frame, between keyframes.
+    let cover = clip_core::media::thumbnail_at(&path, 1.7).unwrap();
+    assert!(cover.starts_with(magic), "cover is not {:?}", info.format);
+
+    // Covers are sharp at desktop display scaling; ten scrub frames stay
+    // small even though the cover grew. This source has a 4:3 aspect ratio.
+    for (name, image, dimensions) in [
+        ("thumbnail", &info.thumbnail, "960,720"),
+        ("cover", &cover, "960,720"),
+        ("sprite", &info.sprite, "1600,120"),
+    ] {
+        let image_path = dir.join(format!("{name}.{}", info.format.extension()));
+        std::fs::write(&image_path, image).unwrap();
+        assert_eq!(
+            ffprobe(&image_path, "stream=width,height").trim(),
+            dimensions
+        );
+    }
 
     assert_eq!(info.audio_tracks, 1);
 

@@ -1,17 +1,22 @@
 <!--
-  The capture strip under the library and Settings: one dot, one sentence
-  that says what the recorder is actually doing, and Save replay while there
-  is a buffer to save. It is also where things are said, so nothing floats
-  over a page: a notice (with its Undo) shows inside it, and while clips are
-  being picked it becomes the selection's own bar. An open clip has no
-  strip; the viewer says its own notices.
+  Legacy capture strip. The current shell uses CaptureControl and
+  CaptureNotice, with selection actions in ClipsView. The shared Notice
+  and Selection types are still imported by the library and viewers.
 -->
 <script lang="ts" module>
   /** Something that happened; optionally with one action. */
   export interface Notice {
     text: string
     error?: boolean
+    /** Ongoing work keeps its progress and Cancel action visible. */
+    persistent?: boolean
+    /** Saved capture metadata; path lets late thumbnails fill the same notice. */
+    media?: { path?: string; thumbnail: string | null; game: string; duration: number | null }
+    detail?: string
+    /** Measured preparation progress, from zero to one. */
+    progress?: number
     action?: { label: string; run: () => void }
+    secondaryAction?: { label: string; run: () => void }
   }
 
   /** The clips being picked in the library, and what can be done with them. */
@@ -82,7 +87,7 @@
   const dot = 'size-2 flex-none rounded-full'
 </script>
 
-<footer class="flex h-strip flex-none items-center gap-3 border-t border-line bg-canvas pr-4 pl-8 text-secondary" aria-label={selection ? 'Selection actions' : 'Capture'} role={selection ? 'toolbar' : undefined}>
+<footer class="flex h-strip flex-none items-center gap-3 border-t border-line bg-chrome pr-4 pl-8 text-secondary" aria-label={selection ? 'Selection actions' : 'Capture'} role={selection ? 'toolbar' : undefined}>
   {#if selection}
     <div class="swap flex min-w-0 flex-1 items-center gap-2">
       <span class="flex-none font-medium tabular-nums">{selection.count} selected</span>
@@ -93,6 +98,7 @@
       {#if recording}
         <span class="{dot} bg-signal-ok"></span>
         <span class="truncate" title="{buffered} of {status?.replay_seconds} seconds ready to save">Capturing {game}</span>
+        <span class="flex-none text-muted tabular-nums">{buffered >= (status?.replay_seconds ?? 0) ? `${buffered}s ready` : buffered ? `${buffered} / ${status?.replay_seconds}s ready` : 'Buffering…'}</span>
         {#if status?.encoder_fallback}
           <!-- The usual encoder refused (a driver out of sessions, say): say
                which one records instead, and when the usual one is tried
@@ -140,15 +146,16 @@
 
   {#if notice}
     <!-- Keyed by its words: a new notice comes in, it doesn't morph. -->
-    {#key notice.text}
+    {#key notice.persistent ? 'work' : notice.text}
       <div class="notice flex max-w-[55%] min-w-0 flex-initial items-center gap-1 {notice.error ? 'text-danger' : ''}" role="status" aria-live="polite">
         <span class="truncate" title={notice.text}>{notice.text}</span>
         {#if notice.action}
           <button class="btn-text" onclick={notice.action.run}>{notice.action.label}</button>
         {/if}
-        <button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss">
-          <X size={15} />
-        </button>
+        {#if notice.secondaryAction}<button class="btn-text" onclick={notice.secondaryAction.run}>{notice.secondaryAction.label}</button>{/if}
+        {#if !notice.persistent}
+          <button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss"><X size={15} /></button>
+        {/if}
       </div>
     {/key}
   {/if}
@@ -162,8 +169,9 @@
     <button class="btn-sm" onclick={selection.oncancel} title="Done selecting (Esc)">Done</button>
   {:else if recording}
     <!-- Only while there is a buffer to save: the hotkey's twin. -->
-    <button class="btn-sm relative overflow-hidden" onclick={onsave} disabled={saving} title="Save the last {buffered} seconds ({hotkey})">
+    <button class="btn-sm relative overflow-hidden" onclick={onsave} disabled={saving || buffered <= 0} title="Save the last {buffered} seconds ({hotkey})">
       Save replay
+      <span class="ml-1 text-caption font-normal text-fg-2" aria-hidden="true">{hotkey}</span>
       {#if flash}
         <span class="shutter absolute inset-0 bg-fg"></span>
       {/if}

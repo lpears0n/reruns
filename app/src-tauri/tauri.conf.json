@@ -14,7 +14,7 @@
       {
         "label": "main",
         "create": false,
-        "backgroundColor": "#0d0d0f",
+        "backgroundColor": "#1b1c1c",
         "title": "Reruns",
         "width": 1280,
         "height": 800,

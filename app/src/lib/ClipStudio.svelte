@@ -3,9 +3,9 @@
   window's strip to its bottom edge. In it, one workspace about 1080 px wide
   (narrower when the window or the picture's height asks), a little above
   the middle: a quiet header (back, what the clip is, one menu), the picture
-  at its own shape, the one timeline that both seeks and trims, and right
-  under it a row with playback on the left and what to do with the clip on
-  the right: Copy clip, Save clip. Fullscreen is a button away.
+  at its own shape, a simple seek bar, and playback beside Copy clip.
+  Trim opens the filmstrip and handles when needed; an edited selection
+  can be saved as a new copy. Fullscreen is a button away.
 
   Everything else is in the header's menu or on a key: favorite, rename,
   delete, speed, loop, fullscreen, the saved clip's audio mix, 9:16, slow
@@ -45,10 +45,10 @@
 </script>
 
 <script lang="ts">
-  import { ArrowLeft, Check, Ellipsis, Maximize, Minimize, Pause, Play, Volume1, Volume2, VolumeX, X } from '@lucide/svelte'
+  import { ArrowLeft, Check, Ellipsis, Maximize, Minimize, Pause, Play, Scissors, Volume1, Volume2, VolumeX, X } from '@lucide/svelte'
   import { untrack } from 'svelte'
   import { getCurrentWindow } from '@tauri-apps/api/window'
-  import { api, type Clip, type ClipPatch, type ExportPlan, fileUrl, videoUrl } from './api'
+  import { api, type Clip, type ClipPatch, type ExportPlan, type GameEntry, fileUrl, videoUrl } from './api'
   import Fader from './Fader.svelte'
   import { duration as length, gameName, parseTime, size, span, timecode, trackName, when } from './format'
   import { playbackStats } from './playbackStats'
@@ -56,12 +56,16 @@
   import { prefs } from './prefs.svelte'
   import type { Notice } from './StatusBar.svelte'
   import Timeline from './Timeline.svelte'
+  import Art from './Art.svelte'
+  import { flyBack, flyIn } from './continuity'
+  import { clock } from './format'
   import { waveform } from './waveform'
 
   let {
     clip,
     busy,
     copied = false,
+    copyBlocked = false,
     progress = 0,
     position = null,
     notice,
@@ -74,12 +78,17 @@
     ondelete,
     onreveal,
     onupdate,
+    entry = null,
+    clips = [],
+    onopen,
   }: {
     clip: Clip
     /** A render is running, for Copy clip or for Save clip. */
     busy: 'copy' | 'save' | null
     /** Copy clip just put the clip on the clipboard. */
     copied?: boolean
+    /** Another clip is being prepared for the clipboard. */
+    copyBlocked?: boolean
     /** Fraction of the render done, while `busy`. */
     progress?: number
     /** Where this clip is in the list it was opened from; null for a file
@@ -102,6 +111,12 @@
     onreveal: () => void
     /** Absent for videos opened from outside the library. */
     onupdate?: (patch: ClipPatch) => void
+    /** The game it's from: its box art, and its logged play sessions. */
+    entry?: GameEntry | null
+    /** The library, for the other clips saved in the same session. */
+    clips?: Clip[]
+    /** Open another clip in this one's place. */
+    onopen?: (clip: Clip) => void
   } = $props()
 
   const game = $derived(gameName(clip.game))
@@ -147,6 +162,8 @@
   let fullscreen = $state(false)
   let start = $state(0)
   let end = $state(0)
+  /** Review is the default. Trimming and advanced edits are opt-in. */
+  let editing = $state(false)
   /** The handles have been moved in from the ends. */
   const trimmed = $derived(start > 0.05 || end < duration - 0.05)
   let speed = $state(1)
@@ -174,6 +191,9 @@
 
   /** Nothing would differ from the clip as it is. */
   const untouched = $derived(!trimmed && vertical === null && !slow && !mixed)
+  /** Files opened from elsewhere can still be added to the library as-is. */
+  const needsSave = $derived(!onupdate || !untouched)
+  const saveLabel = $derived(untouched ? 'Save clip' : vertical !== null || slow || mixed ? 'Save edited copy' : 'Save trimmed copy')
   const edit = $derived<Edit>({ start, end, volumes: levels.map((l) => l / 100), vertical, slow })
   /** What the selection is, in one line: shown once something has changed. */
   const summary = $derived(
@@ -193,9 +213,11 @@
     vertical = null
     slowFactor = 1
     levelEdits = []
+    editing = false
   }
 
   function setSlow(factor: number) {
+    if (factor > 1) editing = true
     // First time on: the middle third of the trim.
     if (factor > 1 && (slowFactor === 1 || slowTo <= slowFrom)) {
       const third = (end - start) / 3
@@ -248,6 +270,7 @@
     shownPath = path
     untrack(() => {
       const d = drafts.get(path)
+      editing = !!d
       time = 0
       duration = clip.duration ?? 0
       start = d?.start ?? 0
@@ -274,6 +297,7 @@
   let wave = $state.raw<{ path: string; peaks: Float32Array | null } | null>(null)
   $effect(() => {
     const path = clip.path
+    if (!editing) return
     let stale = false
     waveform(path, untrack(() => clip.size_bytes)).then((peaks) => {
       if (!stale) wave = { path, peaks }
@@ -360,8 +384,15 @@
     poke()
   }
 
-  const setIn = () => (start = Math.max(0, Math.min(time, end - 0.1)))
-  const setOut = () => (end = Math.min(duration, Math.max(time, start + 0.1)))
+  function setIn() {
+    editing = true
+    start = Math.max(0, Math.min(time, end - 0.1))
+  }
+
+  function setOut() {
+    editing = true
+    end = Math.min(duration, Math.max(time, start + 0.1))
+  }
 
   async function setFullscreen(on: boolean) {
     fullscreen = on
@@ -408,8 +439,8 @@
   const fit = $derived(plan && limit !== null ? `Fits under ${limit} MB at ${plan.max_height}p${plan.fps ?? ''}, ${(plan.video_kbps / 1000).toFixed(1)} Mb/s.` : '')
 
   const valid = $derived(end - start >= 0.1)
-  const canCopy = $derived(valid && !busy && (copyAsIs || !planError))
-  const canSave = $derived(valid && !busy && !(prefs.shareLimitSave && planError))
+  const canCopy = $derived(valid && !busy && !copyBlocked && (copyAsIs || !planError))
+  const canSave = $derived(needsSave && valid && !busy && !copyBlocked && !(prefs.shareLimitSave && planError))
   const copy = () => canCopy && oncopy(edit, untouched)
   const save = () => canSave && onsave(edit)
 
@@ -435,6 +466,7 @@
   let pointsError = $state('')
 
   function openPoints() {
+    editing = true
     startText = timecode(start)
     endText = timecode(end)
     pointsError = ''
@@ -481,7 +513,7 @@
     } else if (e.code === 'Escape') {
       if (help) help = false
       else if (fullscreen) setFullscreen(false)
-      else onback()
+      else back()
     } else if (e.code === 'ArrowLeft') {
       e.preventDefault()
       onstep(-1)
@@ -518,6 +550,8 @@
     } else if (e.code === 'KeyN' && onupdate) {
       e.preventDefault()
       startTitle()
+    } else if (e.code === 'KeyT' && onupdate) {
+      takeCover()
     } else if (e.code === 'KeyI') {
       setIn()
     } else if (e.code === 'KeyO') {
@@ -537,6 +571,7 @@
     ['R', 'Loop'],
     ['S', 'Favorite'],
     ['N', 'Rename'],
+    ['T', 'Use this frame as cover'],
     ['M', 'Mute'],
     ['F', 'Fullscreen'],
     ['Ctrl+C', 'Copy clip'],
@@ -554,20 +589,77 @@
 
   // The workspace's size. The picture is as wide as the column allows and
   // as tall as leaves room for everything under it; the column then follows
-  // the picture (never narrower than NARROWEST), so the header, timeline and
-  // row line up with the picture's edges. Only a resize recomputes this.
+  // the picture (never narrower than NARROWEST). The header and control deck
+  // share that column; a portrait or height-limited picture stays centred
+  // within it. Wrapped controls are measured before reserving picture room.
   let boxW = $state(0)
   let boxH = $state(0)
   const COLUMN = 1080
   const NARROWEST = 560
   /** The viewer's own side padding (`px-6`). */
   const SIDE = 24
-  /** Everything stacked with the picture: header 56, gaps 20 + 14 + 10,
-   *  timeline 60, row 40, and the least space above and below, 24 each. */
-  const AROUND = 56 + 20 + 14 + 60 + 10 + 40 + 24 + 24
+  /** Measure the controls so a wrapped export notice always has room.
+   *  Review controls are 68 px; content never determines their width. */
+  let deckHeight = $state(68)
+  const AROUND = $derived(56 + 20 + 12 + deckHeight + 24 + 24)
   const room = $derived(Math.max(0, boxW - SIDE * 2))
   const pictureW = $derived(Math.min(room, COLUMN, Math.max(120, boxH - AROUND) * aspect))
   const columnW = $derived(Math.min(room, COLUMN, Math.max(pictureW, NARROWEST)))
+
+  // Opened from a card: its picture flies into this one, once it is laid out.
+  let playerEl: HTMLDivElement | undefined = $state()
+  let flown = ''
+  /** The card's picture is still on its way here: the player waits unseen. */
+  let arriving = $state(true)
+  $effect(() => {
+    if (!playerEl || pictureW <= 0 || flown === clip.path) return
+    flown = clip.path
+    const el = playerEl
+    const path = clip.path
+    requestAnimationFrame(() => flyIn(path, el, video).then(() => (arriving = false)))
+  })
+
+  /** Back to the library, landing on this clip's card. Leaves at once. */
+  function back() {
+    const rect = fullscreen ? null : (playerEl?.getBoundingClientRect() ?? null)
+    flyBack(clip.path, rect, clip.thumbnail ? fileUrl(clip.thumbnail) : null)
+    onback()
+  }
+
+  /** The play session this clip was saved in (from the recorder's log),
+   *  and every clip saved in it, oldest first. */
+  const session = $derived.by(() => {
+    const g = entry
+    const s = g?.sessions.find((s) => clip.created_ms >= s.start_ms - 90_000 && clip.created_ms <= s.end_ms + 90_000)
+    if (!g || !s) return null
+    const saved = clips.filter((c) => c.game === clip.game && c.created_ms >= s.start_ms - 90_000 && c.created_ms <= s.end_ms + 90_000).sort((a, b) => a.created_ms - b.created_ms)
+    const live = g.playing && Date.now() - s.end_ms < 120_000
+    return { clips: saved, range: live ? `since ${clock(s.start_ms)}` : `${clock(s.start_ms)} – ${clock(s.end_ms)}` }
+  })
+  /** Room under the workspace for it: shown only where the picture keeps its full size. */
+  const spare = $derived((boxH - (pictureW / aspect + AROUND - 48)) * (2 / 3))
+
+  /** The game's box art, beside the clip's name. */
+  const box = $derived(entry?.art.capsule ?? null)
+
+  // The frame on screen as the clip's picture in the library, kept in its
+  // sidecar. The button says so itself, like Copy clip; Undo stays beside it
+  // a moment and puts back the cover before. A failure is the app's notice.
+  let coverSet = $state<{ path: string; before: number | null } | null>(null)
+  const coverSaid = $derived(coverSet?.path === clip.path)
+  let coverTimer: ReturnType<typeof setTimeout>
+  function takeCover() {
+    if (!onupdate) return
+    video.pause()
+    coverSet = { path: clip.path, before: clip.cover ?? null }
+    onupdate({ cover: video.currentTime })
+    clearTimeout(coverTimer)
+    coverTimer = setTimeout(() => (coverSet = null), 2400)
+  }
+  function undoCover() {
+    if (coverSaid) onupdate?.({ cover: coverSet!.before ?? -1 })
+    coverSet = null
+  }
 
   // Keys go to the viewer first, not to what it replaced.
   let root: HTMLDivElement
@@ -583,12 +675,14 @@
 
 {#snippet timeline(lane: Float32Array | null | undefined)}
   <Timeline
+    {editing}
     {duration}
     {time}
     sprite={clip.sprite ? fileUrl(clip.sprite) : null}
     frames={clip.sprite_frames}
     peaks={lane}
     markers={clip.markers}
+    saved={onupdate && !clip.is_edit && duration ? duration : null}
     bind:start
     bind:end
     slow={slowFactor > 1}
@@ -599,7 +693,7 @@
 {/snippet}
 
 {#snippet check(on: boolean)}
-  <span class="flex w-4 flex-none justify-center text-accent">{#if on}<Check size={15} strokeWidth={2.5} />{/if}</span>
+  <span class="flex w-4 flex-none justify-center text-accent">{#if on}<Check size={16} strokeWidth={2.5} />{/if}</span>
 {/snippet}
 
 <div
@@ -618,10 +712,13 @@
   <div class="workspace flex flex-none flex-col" style:width="{columnW}px">
   <!-- Back, what this is, one menu. -->
   <header class="flex h-14 flex-none items-center gap-2">
-    <button class="btn-icon -ml-2" onclick={onback} aria-label="Back to the library" title="Back to the library (Esc)">
+    <button class="btn-icon -ml-2" onclick={back} aria-label="Back to the library" title="Back to the library (Esc)">
       <ArrowLeft size={20} />
     </button>
 
+    {#if box}
+      <span class="box" aria-hidden="true"><Art path={box} class="size-full object-cover" /></span>
+    {/if}
     <div class="min-w-0 flex-1">
       {#if editingTitle}
         <!-- svelte-ignore a11y_autofocus -->
@@ -705,15 +802,22 @@
       <button class="menu-item" role="menuitemcheckbox" aria-checked={loop} onclick={() => (loop = !loop)}>
         {@render check(loop)}Loop<span class="menu-key">R</span>
       </button>
+      {#if clip.markers.length}
+        <button class="menu-item" role="menuitem" onclick={() => jumpToMarker(-1)}>{@render check(false)}Previous marked moment<span class="menu-key">[</span></button>
+        <button class="menu-item" role="menuitem" onclick={() => jumpToMarker(1)}>{@render check(false)}Next marked moment<span class="menu-key">]</span></button>
+      {/if}
       <button class="menu-item" role="menuitem" onclick={() => setFullscreen(true)}>{@render check(false)}Fullscreen<span class="menu-key">F</span></button>
 
       <div class="menu-rule"></div>
       <div class="pt-1 pr-2.5 pb-1.5 pl-9 text-caption text-muted">The copied or saved clip</div>
+      {#if onupdate}
+        <button class="menu-item" role="menuitem" onclick={takeCover}>{@render check(clip.cover != null)}Use this frame as cover<span class="menu-key">T</span></button>
+      {/if}
       <button class="menu-item" role="menuitem" onclick={openPoints}>{@render check(false)}Set trim points…</button>
       {#if sourceTracks}
         <button class="menu-item" role="menuitem" onclick={() => more && mix?.openFrom(more)}>{@render check(mixed)}Audio mix…</button>
       {/if}
-      <button class="menu-item" role="menuitemcheckbox" aria-checked={vertical !== null} onclick={() => (vertical = vertical === null ? 0.5 : null)}>
+      <button class="menu-item" role="menuitemcheckbox" aria-checked={vertical !== null} onclick={() => { vertical = vertical === null ? 0.5 : null; if (vertical !== null) editing = true }}>
         {@render check(vertical !== null)}Vertical 9:16
       </button>
       <div class="flex items-center gap-1 py-0.5 pr-1 pl-2.5">
@@ -766,7 +870,7 @@
         {#each levels as level, i (i)}
           <div class="flex items-center gap-3">
             <span class="w-12 flex-none text-fg-2">{trackName(i)}</span>
-            <Fader label="{trackName(i)} level" class="flex-1!" value={level} max={200} step={5} detent={100} text="{level}%" oninput={(v) => (levelEdits = levels.with(i, v))} />
+            <Fader label="{trackName(i)} level" class="flex-1!" value={level} max={200} step={5} detent={100} text="{level}%" oninput={(v) => { levelEdits = levels.with(i, v); if (v !== 100) editing = true }} />
             <span class="w-11 flex-none text-right tabular-nums {level === 100 ? 'text-fg-2' : ''}">{level}%</span>
           </div>
         {/each}
@@ -778,10 +882,11 @@
   <!-- The picture at its own shape; its frame is exactly the footage, no
        black panel round it. (No container query or transform up the tree:
        either would trap the fullscreen picture inside it.) -->
-  <div class="mt-5 flex flex-none justify-center">
+  <div class="picture-stage mt-5 flex flex-none justify-center" style:--picture-width="{pictureW}px">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-      class={['player overflow-hidden bg-black', fullscreen ? 'fixed inset-0 z-50' : 'relative rounded-frame', { 'hide-cursor': fullscreen && !showControls }]}
+      bind:this={playerEl}
+      class={['player overflow-hidden bg-black', fullscreen ? 'fixed inset-0 z-50' : 'relative rounded-frame', { 'hide-cursor': fullscreen && !showControls, 'opacity-0': arriving }]}
       style:aspect-ratio={fullscreen ? undefined : aspect}
       style:width={fullscreen ? undefined : `${pictureW}px`}
       onpointermove={poke}
@@ -831,12 +936,12 @@
           {@render timeline(null)}
           <div class="mt-2 flex items-center gap-3 px-4 text-white">
             <button class="btn-icon text-white hover:not-disabled:bg-white/15" onclick={toggle} aria-label={paused ? 'Play' : 'Pause'}>
-              {#if paused}<Play size={18} fill="currentColor" strokeWidth={0} />{:else}<Pause size={18} fill="currentColor" strokeWidth={0} />{/if}
+              {#if paused}<Play size={20} fill="currentColor" strokeWidth={0} />{:else}<Pause size={20} fill="currentColor" strokeWidth={0} />{/if}
             </button>
             <span class="tabular-nums">{length(time)} <span class="text-white/60">/ {length(duration)}</span></span>
             <div class="flex-1"></div>
             <button class="btn-icon text-white hover:not-disabled:bg-white/15" onclick={() => setFullscreen(false)} aria-label="Exit fullscreen" title="Exit fullscreen (F)">
-              <Minimize size={18} />
+              <Minimize size={20} />
             </button>
           </div>
         </div>
@@ -845,84 +950,130 @@
   </div>
 
   {#if !fullscreen}
-    <div class="mt-3.5 flex-none">{@render timeline(peaks)}</div>
-  {/if}
+  <div class="edit-deck" class:compact={columnW < 840} bind:clientHeight={deckHeight} data-deck>
+    {@render timeline(peaks)}
 
-  <!-- Playback on the left; what to do with the clip on the right. -->
-  <div class="relative mt-2.5 flex h-10 flex-none items-center gap-1" data-deck>
-    <button class="btn-icon -ml-2 size-10 text-fg" onclick={toggle} aria-label={paused ? 'Play' : 'Pause'} title="{paused ? 'Play' : 'Pause'} (Space)">
-      {#if paused}<Play size={18} fill="currentColor" strokeWidth={0} />{:else}<Pause size={18} fill="currentColor" strokeWidth={0} />{/if}
+  <!-- Review controls stay small; trimming is an explicit next action. -->
+  <div class="transport">
+    <div class="playback-controls">
+    <button class="btn-icon play-control text-fg" onclick={toggle} aria-label={paused ? 'Play' : 'Pause'} title="{paused ? 'Play' : 'Pause'} (Space)">
+      {#if paused}<Play size={20} fill="currentColor" strokeWidth={0} />{:else}<Pause size={20} fill="currentColor" strokeWidth={0} />{/if}
     </button>
-    <span class="flex-none pr-2 pl-0.5 whitespace-nowrap tabular-nums" aria-label="Time">{length(time)} <span class="text-fg-2">/ {length(duration)}</span></span>
+    <span class="playback-time whitespace-nowrap tabular-nums" aria-label="Time">{length(time)} <span class="text-fg-2">/ {length(duration)}</span></span>
 
     <Popover label="Playback volume" menu={false} side="top" align="start">
       {#snippet trigger(props)}
         <button {...props} class="btn-icon" aria-label="Playback volume" title="Playback volume (M mutes)">
-          {#if heard.muted || heard.volume === 0}<VolumeX size={19} />{:else if heard.volume < 0.5}<Volume1 size={19} />{:else}<Volume2 size={19} />{/if}
+          {#if heard.muted || heard.volume === 0}<VolumeX size={20} />{:else if heard.volume < 0.5}<Volume1 size={20} />{:else}<Volume2 size={20} />{/if}
         </button>
       {/snippet}
       <div class="flex items-center gap-2 py-2 pr-4 pl-2">
         <button class="btn-icon-sm hover:not-disabled:bg-hover" onclick={() => (heard.muted = !heard.muted)} aria-label={heard.muted ? 'Unmute' : 'Mute'} aria-pressed={heard.muted} title="{heard.muted ? 'Unmute' : 'Mute'} (M)">
-          {#if heard.muted}<VolumeX size={17} />{:else}<Volume2 size={17} />{/if}
+          {#if heard.muted}<VolumeX size={16} />{:else}<Volume2 size={16} />{/if}
         </button>
         <Fader label="Playback volume" class="w-36!" value={heard.muted ? 0 : heard.volume} max={1} step={0.05} text="{Math.round((heard.muted ? 0 : heard.volume) * 100)}%" oninput={(v) => ((heard.volume = v), (heard.muted = false))} />
         <span class="w-10 flex-none text-right text-secondary text-fg-2 tabular-nums">{Math.round((heard.muted ? 0 : heard.volume) * 100)}%</span>
       </div>
     </Popover>
     <button class="btn-icon" onclick={() => setFullscreen(true)} aria-label="Fullscreen" title="Fullscreen (F)">
-      <Maximize size={17} />
+      <Maximize size={20} />
     </button>
-
-    <!-- What is selected, once it isn't the whole clip as it is. -->
-    <div class="flex min-w-0 flex-initial items-center gap-1 pl-3">
-      {#if summary}
-        <span class="truncate text-secondary text-fg-2 tabular-nums" title={summary}>{summary}</span>
-        <button class="btn-text" onclick={reset} title="Back to the whole clip as it is">Reset</button>
-      {/if}
     </div>
 
-    <div class="min-w-2 flex-1"></div>
-
-    <!-- What is happening or just happened. Said here, beside the actions:
-         progress with its Cancel, then the outcome, then why it can't be done. -->
-    <div class="flex min-w-0 flex-initial items-center gap-1 text-secondary" role="status" aria-live="polite">
-      {#if busy}
-        <span class="truncate tabular-nums">{busy === 'save' ? 'Saving clip' : 'Preparing clip'}… {Math.round(progress * 100)}%</span>
-        <button class="btn-text" onclick={oncancel}>Cancel</button>
-      {:else if notice}
-        {#key notice.text}
-          <span class="said truncate font-medium {notice.error ? 'text-danger' : ''}" title={notice.text}>{notice.text}</span>
-          {#if notice.action}
-            <button class="btn-text" onclick={notice.action.run}>{notice.action.label}</button>
-          {/if}
-          <button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss">
-            <X size={15} />
-          </button>
-        {/key}
-      {:else if planError}
-        <span class="truncate text-danger" title={planError}>{planError.charAt(0).toUpperCase() + planError.slice(1)}</span>
-      {/if}
-      <!-- The button says Copied; this says it to a screen reader. -->
-      {#if copied && !notice}<span class="sr-only">Clip copied</span>{/if}
-    </div>
-
+    <div class="export-controls">
+    <button class="btn-text trim-control" disabled={!!busy} onclick={() => (editing = !editing)} aria-expanded={editing} title={editing ? 'Review the clip with these changes' : 'Shorten this clip'}>
+      {#if editing}<Check size={16} />Done trimming{:else}<Scissors size={16} />Trim{/if}
+    </button>
     <!-- Both labels share one cell, so the button keeps its width. -->
-    <button class="btn-primary ml-2" disabled={!canCopy} onclick={copy} title="Put this clip on the clipboard as a file, to paste into a chat or a folder (Ctrl+C). {copyAsIs ? '' : fit}">
+    <button class="btn-primary" disabled={!canCopy} onclick={copy} title="Put this clip on the clipboard as a file, to paste into a chat or a folder (Ctrl+C). {copyAsIs ? '' : fit}">
       <span class="grid">
         <span class="col-start-1 row-start-1 text-center {copied ? 'invisible' : ''}">Copy clip</span>
         <span class="col-start-1 row-start-1 inline-flex items-center justify-center gap-1.5 {copied ? '' : 'invisible'}"><Check size={16} />Copied</span>
       </span>
     </button>
-    <button class="btn" disabled={!canSave} onclick={save} title="Save the selection as a new clip in the library. The original stays as it is. {prefs.shareLimitSave ? fit : ''}">
-      Save clip
-    </button>
+    {#if needsSave}
+      <button class="btn" disabled={!canSave} onclick={save} title="Save these changes as a new clip in the library. The original stays as it is. {prefs.shareLimitSave ? fit : ''}">
+        {saveLabel}
+      </button>
+    {/if}
+    </div>
+  </div>
+
+  {#if editing || summary || coverSaid || busy || notice || planError}
+  <div class="edit-feedback">
+    <!-- What is selected, once it isn't the whole clip as it is. -->
+    {#if summary || editing}
+    <div class="selection-summary">
+        <span class="text-secondary text-fg-2 tabular-nums">{summary || `${span(end - start)} selected`}</span>
+        {#if summary}<button class="btn-text" disabled={!!busy} onclick={reset} title="Back to the whole clip as it is">Reset</button>{/if}
+    </div>
+    {/if}
+
+    {#if coverSaid}
+      <div class="cover-feedback flex items-center gap-2 text-secondary text-fg-2"><Check size={16} /><span>Cover set</span><button class="btn-text" onclick={undoCover}>Undo</button></div>
+    {/if}
+
+    <!-- What is happening or just happened. Said here, beside the actions:
+         progress with its Cancel, then the outcome, then why it can't be done. -->
+    <div class="edit-status text-secondary">
+      {#if busy}
+        <span class="truncate tabular-nums">{busy === 'save' ? 'Saving clip' : 'Preparing clip'}… {Math.round(progress * 100)}%</span>
+        <button class="btn-text" onclick={oncancel}>Cancel</button>
+        {#if notice?.secondaryAction}<button class="btn-text" onclick={notice.secondaryAction.run}>{notice.secondaryAction.label}</button>{/if}
+      {:else if notice}
+        {#key notice.persistent ? 'work' : notice.text}
+          <span class="said notice-copy font-medium {notice.error ? 'text-danger' : ''}">{notice.text}</span>
+          {#if notice.action}
+            <button class="btn-text" onclick={notice.action.run}>{notice.action.label}</button>
+          {/if}
+          {#if notice.secondaryAction}<button class="btn-text" onclick={notice.secondaryAction.run}>{notice.secondaryAction.label}</button>{/if}
+          {#if !notice.persistent}
+            <button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss">
+              <X size={16} />
+            </button>
+          {/if}
+        {/key}
+      {:else if planError}
+        <span class="notice-copy text-danger">{planError.charAt(0).toUpperCase() + planError.slice(1)}</span>
+      {/if}
+    </div>
+  </div>
+  {/if}
+  <!-- Keep the live region mounted between feedback states. -->
+  <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+    {#if busy}{busy === 'save' ? 'Saving clip' : 'Preparing clip'}… {Math.round(progress * 100)}%
+    {:else if notice}{notice.text}
+    {:else if planError}{planError}
+    {:else if coverSaid}Cover set
+    {:else if copied}Clip copied{/if}
+  </span>
 
     {#if busy}
-      <div class="absolute inset-x-0 -bottom-1.5 h-0.5 origin-left bg-accent transition-transform duration-normal" style:transform="scaleX({progress})" role="progressbar" aria-label={busy === 'save' ? 'Saving clip' : 'Preparing clip'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}></div>
+      <div class="absolute inset-x-3 bottom-0 h-0.5 origin-left bg-accent transition-transform duration-normal" style:transform="scaleX({progress})" role="progressbar" aria-label={busy === 'save' ? 'Saving clip' : 'Preparing clip'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}></div>
     {/if}
   </div>
+  {/if}
   </div>
-  <div class="min-h-6 flex-[2]"></div>
+  <div class="flex min-h-6 flex-[2] flex-col items-center">
+    {#if session && session.clips.length > 1 && spare >= 124 && !fullscreen}
+      <!-- The rest of the evening: the clips saved in the same play session,
+           in the order they were saved; this one ringed. In the room under
+           the workspace only: the picture never shrinks for it. -->
+      <nav class="session-strip mt-7 flex flex-none flex-col gap-2" style:width="{columnW}px" aria-label="Clips from this session">
+        <div class="text-secondary text-muted">{game}, {session.range}</div>
+        <div class="flex gap-2 overflow-x-auto pb-1">
+          {#each session.clips as c (c.path)}
+            {@const here = c.path === clip.path}
+            {@const pic = c.thumbnail ? fileUrl(c.thumbnail) : null}
+            <button class={['sib', { here }]} disabled={here || !!busy} aria-current={here ? 'true' : undefined} onclick={() => onopen?.(c)} title="{c.title ?? game}, {clock(c.created_ms)}">
+              {#if pic}<img src={pic} alt="" draggable="false" />{/if}
+              <span class="sib-time">{clock(c.created_ms)}</span>
+            </button>
+          {/each}
+        </div>
+      </nav>
+    {/if}
+  </div>
 </div>
 
 {#if help}
@@ -941,9 +1092,125 @@
 {/if}
 
 <style>
+  .picture-stage {
+    position: relative;
+  }
+
+  /* Controls sit directly on the canvas. Only the optional filmstrip
+     needs a bounded surface; the whole player is not an editing panel. */
+  .edit-deck {
+    position: relative;
+    flex: none;
+    min-width: 0;
+    margin-top: 12px;
+    padding: 0 8px;
+  }
+
+  .transport {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    min-height: 36px;
+    margin-top: 8px;
+  }
+
+  .playback-controls,
+  .export-controls {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .play-control {
+    width: 36px;
+    height: 36px;
+    background: var(--color-raised);
+    border: 1px solid var(--color-line-strong);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+  }
+
+  .play-control:hover {
+    background: var(--color-hover);
+  }
+
+  .play-control:active {
+    background: var(--color-canvas);
+    box-shadow: none;
+  }
+
+  .playback-time {
+    flex: none;
+    padding: 0 4px;
+  }
+
+  .export-controls {
+    margin-left: auto;
+    gap: 8px;
+  }
+
+  .compact .transport {
+    gap: 8px;
+  }
+
+  .trim-control {
+    height: 36px;
+    gap: 6px;
+    color: var(--color-fg-2);
+  }
+
+  .edit-feedback {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-height: 32px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-line);
+  }
+
+  .selection-summary,
+  .edit-status {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .selection-summary > span,
+  .notice-copy {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .edit-status {
+    justify-content: flex-end;
+  }
+
+  .edit-status:empty {
+    display: none;
+  }
+
+  .compact .edit-feedback {
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+
+  .compact .selection-summary,
+  .compact .edit-status {
+    flex-basis: 100%;
+  }
+
+  .compact .edit-status {
+    justify-content: flex-start;
+  }
+
   /* The library becomes the viewer: a short fade, and gone at once (Esc
      is a key; keys are never made to wait). */
   .viewer {
+    isolation: isolate;
     transition: opacity var(--duration-normal) var(--ease-out);
     @starting-style {
       opacity: 0;
@@ -955,6 +1222,80 @@
     @starting-style {
       opacity: 0;
     }
+  }
+
+  /* The game's box art beside the clip's name: where it's from, at a glance. */
+  .box {
+    position: relative;
+    display: block;
+    flex: none;
+    width: 26px;
+    height: 38px;
+    margin-right: 6px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: var(--color-raised);
+  }
+
+  .box::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 14%);
+  }
+
+  .sib {
+    position: relative;
+    flex: none;
+    width: 112px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: var(--radius-frame);
+    background: var(--color-chrome);
+    opacity: 0.62;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .sib img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .sib::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
+  }
+
+  .sib:hover:not(:disabled),
+  .sib:focus-visible {
+    opacity: 1;
+  }
+
+  .sib.here {
+    opacity: 1;
+    cursor: default;
+  }
+
+  .sib.here::after {
+    box-shadow: inset 0 0 0 2px var(--color-fg);
+  }
+
+  .sib-time {
+    position: absolute;
+    left: 4px;
+    bottom: 4px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: rgb(0 0 0 / 72%);
+    color: #fff;
+    font-size: 12px;
+    line-height: 16px;
+    font-variant-numeric: tabular-nums;
   }
 
   .hide-cursor,

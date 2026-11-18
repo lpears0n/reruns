@@ -39,6 +39,7 @@
   import Art from './Art.svelte'
   import { gameName } from './format'
   import { CATEGORIES, type Category } from './SettingsView.svelte'
+  import { tint } from './tint.svelte'
 
   let {
     open,
@@ -114,9 +115,10 @@
   const hide = () => (tip = null)
 </script>
 
-{#snippet item(label: string, current: boolean, onclick: () => void, glyph: Snippet, detail = '')}
+{#snippet item(label: string, current: boolean, onclick: () => void, glyph: Snippet, detail = '', hue = '')}
   <button
-    class={['item', { current }]}
+    class={['item', { current, tinted: current && hue }]}
+    style:--tint={hue || undefined}
     aria-current={current ? 'page' : undefined}
     {onclick}
     onpointerenter={(e) => show(e, label, detail)}
@@ -186,20 +188,21 @@
                 {/if}
               {/snippet}
               {#if g.art.capsule}
-                <Art path={g.art.capsule} class="absolute inset-0 size-full object-cover object-top" fallback={frame} />
+                <Art path={g.art.capsule} class="absolute inset-0 size-full object-cover" fallback={frame} />
               {:else}
                 {@render frame()}
               {/if}
             </span>
           {/snippet}
-          {@render item(gameName(g.name), scope === 'game' && game === g.name, () => onscope('game', g.name), art, g.playing ? 'Playing now' : '')}
+          {@const pic = g.art.capsule ?? g.fallback_image ?? newestFrame.get(g.name)?.src ?? null}
+          {@render item(gameName(g.name), scope === 'game' && game === g.name, () => onscope('game', g.name), art, g.playing ? 'Playing now' : '', tint(g.name, pic ? fileUrl(pic) : null))}
         {/each}
       {/if}
     </nav>
   {/if}
 
   {#if update || !settings}
-  <div class="flex flex-none flex-col border-t border-line py-2">
+  <div class="nav-footer flex flex-none flex-col py-2">
     {#if update}
       {#snippet download()}<Download size={18} class="text-accent" />{/snippet}
       {@render item(`Update to ${update.version}`, false, onupdate, download)}
@@ -226,7 +229,7 @@
     flex-direction: column;
     width: var(--spacing-nav-collapsed);
     overflow: hidden;
-    background: var(--color-chrome);
+    background: transparent;
     transition: width var(--duration-normal) var(--ease-out);
   }
 
@@ -236,6 +239,20 @@
 
   .list {
     scrollbar-width: none;
+  }
+
+  .nav-footer {
+    position: relative;
+  }
+
+  .nav-footer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 20px;
+    right: 20px;
+    height: 1px;
+    background: color-mix(in srgb, var(--color-line) 65%, transparent);
   }
 
   /* 40 px rows, inset 8 px from both edges (56 px wide folded). The glyph
@@ -270,7 +287,7 @@
   /* Where you are: a firmer surface, the name in medium, and the one
      indicator: a short tab of the accent on the selection's inner edge. */
   .item.current {
-    background: rgb(255 255 255 / 8%);
+    background: linear-gradient(90deg, var(--color-raised), color-mix(in srgb, var(--color-raised) 28%, transparent));
     color: var(--color-fg);
     font-weight: 500;
   }
@@ -306,14 +323,31 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 22px;
+    height: 32px;
     overflow: hidden;
-    border-radius: var(--radius-chip);
+    border-radius: 3px;
     background: color-mix(in oklab, var(--c) 22%, var(--color-raised));
     color: var(--c);
     font-size: 12px;
     font-weight: 600;
+  }
+
+  .art::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%);
+  }
+
+  /* The game being listed: its row takes the game's own colour. */
+  .item.tinted {
+    background: linear-gradient(90deg, color-mix(in oklab, var(--tint) 75%, var(--color-chrome)), color-mix(in oklab, var(--tint) 32%, transparent));
+  }
+
+  .item.tinted .art::after {
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 30%);
   }
 
   .tip {

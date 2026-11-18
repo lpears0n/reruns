@@ -9,6 +9,7 @@
   let {
     shot,
     notice,
+    copyBlocked = false,
     ondismiss,
     onclose,
     oncopy,
@@ -18,6 +19,7 @@
     shot: Screenshot
     /** What just happened, said beside the actions. */
     notice: Notice | null
+    copyBlocked?: boolean
     ondismiss: () => void
     onclose: () => void
     oncopy: () => void
@@ -59,18 +61,18 @@
       {#if notice}
         <div class="flex min-w-0 flex-initial items-center gap-1 text-secondary {notice.error ? 'text-danger' : ''}" role="status" aria-live="polite">
           <span class="truncate" title={notice.text}>{notice.text}</span>
-          <button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss">
-            <X size={15} />
-          </button>
+          {#if notice.action}<button class="btn-text" onclick={notice.action.run}>{notice.action.label}</button>{/if}
+          {#if notice.secondaryAction}<button class="btn-text" onclick={notice.secondaryAction.run}>{notice.secondaryAction.label}</button>{/if}
+          {#if !notice.persistent}<button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss"><X size={15} /></button>{/if}
         </div>
       {/if}
       <button class="btn-icon" onclick={ondelete} title="Delete" aria-label="Delete screenshot">
         <Trash2 size={18} />
       </button>
       <button class="btn" onclick={onreveal}>Show in folder</button>
-      <button class="btn-primary" onclick={oncopy} title="Put this screenshot on the clipboard as a file">Copy screenshot</button>
+      <button class="btn-primary" onclick={oncopy} disabled={copyBlocked} title="Put this screenshot on the clipboard as a file">Copy screenshot</button>
     </header>
-    <div class="mt-5 flex justify-center">
+    <div class="picture-stage mt-5 flex justify-center">
       <!-- As tall as leaves the header and the space round it in view. -->
       <img src={fileUrl(shot.path)} alt="" class="max-w-full rounded-frame object-contain" style:max-height="{Math.max(120, boxH - 56 - 20 - 48)}px" />
     </div>
@@ -80,9 +82,15 @@
 
 <style>
   .viewer {
+    isolation: isolate;
     transition: opacity var(--duration-normal) var(--ease-out);
     @starting-style {
       opacity: 0;
     }
   }
+
+  .picture-stage {
+    position: relative;
+  }
+
 </style>

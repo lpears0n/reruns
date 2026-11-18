@@ -129,12 +129,12 @@ function worstCase(games, clips, now) {
 // the grid shows the app's own empty media frame. Screenshots and Steam art
 // need a picture that loads; it is one flat grey.
 const frame = () => `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#2a2a30"/></svg>`
-const SVG = { 'Content-Type': 'image/svg+xml' }
+const SVG = { 'Content-Type': 'image/svg+xml', 'Access-Control-Allow-Origin': '*' }
 
 // Real pictures for local screenshots (see the top of this file).
 const FRAMES = process.env.RERUNS_SHOT_FRAMES
 const frameCount = FRAMES ? fs.readdirSync(FRAMES).filter((f) => /^thumb-\d+\.jpg$/.test(f)).length : 0
-const JPG = { 'Content-Type': 'image/jpeg' }
+const JPG = { 'Content-Type': 'image/jpeg', 'Access-Control-Allow-Origin': '*' }
 /** thumb-N.jpg or sprite-N.jpg for clip `i`, or null without the folder. */
 const realFrame = (kind, i) => (frameCount ? fs.readFileSync(path.join(FRAMES, `${kind}-${i % frameCount}.jpg`)) : null)
 /** Steam's own file for a librarycache path: by name anywhere under the
@@ -183,7 +183,9 @@ function mockBridge(data) {
           title: args.patch.title === undefined ? c.title : args.patch.title.trim() || null,
           favorite: args.patch.favorite ?? c.favorite,
           labels: args.patch.labels ?? c.labels,
+          cover: args.patch.cover === undefined ? c.cover : args.patch.cover < 0 ? null : args.patch.cover,
         })
+        window.__patch = args.patch
         return c
       }
       if (cmd === 'ignore_current_game') {
@@ -277,9 +279,11 @@ async function serve(page, { failFirst = true, clip = process.env.RERUNS_SHOT_CL
   // Files on disk: screenshots load, Steam's portrait loads on its second
   // request, the rest is missing.
   const hits = {}
-  await page.route('http://127.0.0.1:2/**', (r) => {
+  await page.route('http://127.0.0.1:2/**', async (r) => {
     const file = decodeURIComponent(new URL(r.request().url()).pathname.slice(1))
-    hits[file] = (hits[file] ?? 0) + 1
+    // The art tint reads the same pictures with CORS: only the page's own
+    // images count towards "fails first".
+    if (!(await r.request().headerValue('origin'))) hits[file] = (hits[file] ?? 0) + 1
     const made = /^\/(thumbs|sprites)\/(\d+)\.svg$/.exec(file)
     if (made && frameCount) return r.fulfill({ status: 200, body: realFrame(made[1] === 'thumbs' ? 'thumb' : 'sprite', Number(made[2])), headers: JPG })
     if (file.startsWith('/home/u/Videos/') && file.endsWith('.png')) return r.fulfill(frameCount ? { status: 200, body: realFrame('thumb', 7), headers: JPG } : { status: 200, body: frame(40), headers: SVG })
@@ -299,6 +303,81 @@ const choose = async (page, menu, item, role = 'menuitem') => {
   await page.getByRole(role, { name: item, exact: role !== 'menuitem' }).first().click()
 }
 
+const viewOption = (page, name) => choose(page, 'View options', name, 'menuitemradio')
+
+const gameChoice = (page, name) => page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name, exact: typeof name === 'string' })
+const selectGame = async (page, name) => {
+  if (name === 'All games') {
+    const clear = page.getByRole('button', { name: 'Show all games', exact: true })
+    if (await clear.count()) await clear.click()
+  } else await gameChoice(page, name).click()
+}
+
+const startTrimming = async (page) => {
+  const trim = page.getByRole('button', { name: 'Trim', exact: true })
+  if (await trim.count()) await trim.click()
+  await page.getByRole('slider', { name: 'Trim start' }).waitFor()
+}
+
+const cardAction = async (page, card, name, screenshot = false) => {
+  await card.hover()
+  await card.getByRole('button', { name: screenshot ? 'Screenshot actions' : 'Clip actions', exact: true }).click()
+  await page.getByRole('menu', { name: 'Clip actions' }).getByRole('menuitem', { name, exact: true }).click()
+}
+
+async function quickCopy(page) {
+  const small = page.locator('.media-card[data-clip-path$="/clip-2.mp4"]')
+  const large = page.locator('.media-card[data-clip-path$="/clip-0.mp4"]')
+  const probes = await page.evaluate(() => window.__calls.filter((cmd) => cmd === 'open_for_edit').length)
+  await page.evaluate(() => { window.__lastRender = null; window.__copied = null })
+  await small.hover()
+  await small.getByRole('button', { name: 'Copy clip', exact: true }).click()
+  await small.getByRole('button', { name: 'Copy clip', exact: true }).filter({ hasText: 'Copied' }).waitFor()
+  assert.match(await page.evaluate(() => window.__copied), /clip-2\.mp4$/, 'a small clip copies directly from the library')
+  assert.equal(await page.evaluate(() => window.__lastRender), null, 'a small clip needs no preparation')
+  assert.equal(await page.evaluate(() => window.__calls.filter((cmd) => cmd === 'open_for_edit').length), probes, 'quick copying a small clip needs no media probe')
+  assert.equal(await page.locator('video').count(), 0, 'copying does not open the viewer')
+
+  // Cancellation must win even when the backend finishes just after the
+  // request: a late render result must never replace the clipboard.
+  const other = page.locator('.media-card[data-clip-path$="/clip-3.mp4"]')
+  await cardAction(page, other, 'Delete')
+  await page.getByRole('button', { name: 'Undo', exact: true }).waitFor()
+  assert.equal(await other.count(), 0, 'a deleted clip is awaiting its undo deadline')
+  await page.evaluate(() => {
+    window.__copied = null
+    window.__renderGate = new Promise((go) => (window.__renderGo = go))
+  })
+  await large.hover()
+  await large.getByRole('button', { name: 'Copy clip', exact: true }).click()
+  await page.getByText(/Preparing clip… \d+%/).waitFor()
+  await page.waitForFunction(() => window.__lastRender)
+  await page.getByRole('button', { name: 'Undo delete', exact: true }).click()
+  await other.waitFor()
+  assert.ok(await page.getByRole('button', { name: 'Cancel', exact: true }).isVisible(), 'undoing deletion keeps the independent copy job running')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await page.waitForFunction(() => window.__calls.includes('cancel_render'))
+  await page.evaluate(() => { window.__renderGo(); window.__renderGate = null })
+  await page.getByRole('button', { name: 'Cancel', exact: true }).waitFor({ state: 'hidden' })
+  assert.equal(await page.evaluate(() => window.__copied), null, 'cancelled preparation cannot copy its late result')
+
+  await page.evaluate(() => {
+    window.__lastRender = null
+    window.__renderGate = new Promise((go) => (window.__renderGo = go))
+  })
+  await large.hover()
+  await large.getByRole('button', { name: 'Copy clip', exact: true }).click()
+  await page.getByText(/Preparing clip… \d+%/).waitFor()
+  await page.waitForFunction(() => window.__lastRender)
+  const prepared = await page.evaluate(() => window.__lastRender)
+  assert.equal(prepared.maxMb, 10, 'library Copy clip honors the same Sharing limit as the viewer')
+  assert.deepEqual([prepared.start, prepared.end], [0, 20], 'quick copy keeps the whole clip')
+  await page.evaluate(() => { window.__renderGo(); window.__renderGate = null })
+  await large.getByRole('button', { name: 'Copy clip', exact: true }).filter({ hasText: 'Copied' }).waitFor()
+  assert.match(await page.evaluate(() => window.__copied), /clip-0_edit\.mp4$/, 'a large clip copies the prepared file')
+  assert.equal(await page.locator('video').count(), 0, 'preparation stays in the library')
+}
+
 const seekTo = (page, t) =>
   page.evaluate(
     (t) =>
@@ -310,6 +389,36 @@ const seekTo = (page, t) =>
     t,
   )
 
+async function cardInteractions(page) {
+  const card = page.locator('.media-card:has(.moments i)').first()
+  const frame = card.locator('.frame')
+  const caption = card.locator('.card-caption')
+  const tools = card.locator('.media-tools')
+  await card.scrollIntoViewIfNeeded()
+  await page.getByLabel('Search clips').focus()
+  await page.getByLabel('Search clips').hover()
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.media-card:has(.moments i) .media-tools')).opacity === '0')
+  const original = { frame: await frame.boundingBox(), caption: await caption.boundingBox() }
+  const stable = async (state) => {
+    assert.deepEqual(await frame.boundingBox(), original.frame, `the picture stays fixed during ${state}`)
+    assert.deepEqual(await caption.boundingBox(), original.caption, `the caption stays fixed during ${state}`)
+    assert.ok(await tools.evaluate((el) => {
+      const r = el.getBoundingClientRect(), picture = el.closest('.frame').getBoundingClientRect()
+      return r.left >= picture.left && r.right <= picture.right && r.top >= picture.top && r.bottom <= picture.bottom
+    }), 'the actions stay within the picture')
+  }
+  await card.hover()
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.media-card:has(.moments i) .media-tools')).opacity === '1')
+  await stable('hover')
+  await page.getByLabel('Search clips').hover()
+  await card.getByRole('button', { name: 'Copy clip', exact: true }).focus()
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.media-card:has(.moments i) .media-tools')).opacity === '1')
+  await stable('keyboard focus')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await stable('reduced motion')
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.getByLabel('Search clips').focus()
+}
 async function runScenario(scenario, browser) {
   const data = fixtures(scenario)
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' })
@@ -324,34 +433,35 @@ async function runScenario(scenario, browser) {
   const cards = () => page.locator('.clip-grid > *').count()
   const fire = (event, payload) => page.evaluate(([event, payload]) => window[`_${window.__listeners[event]}`]({ event, id: 1, payload }), [event, payload])
 
-  const sidebar = page.getByRole('navigation', { name: 'Library' })
+  const libraryNav = page.getByRole('navigation', { name: 'Library' })
   await shot('library')
   if (scenario === 'full') {
-    // Every clip, in dated sections, newest first; the header and the navigation count them.
+    // Every clip, in dated sections, newest first; the toolbar counts them.
     const days = await page.locator('main h2').allTextContents()
     // The newest clip is an hour old: yesterday's, just after midnight.
     assert.ok(['Today', 'Yesterday'].includes(days[0]), `newest day first: ${days}`)
     assert.equal(new Set(days).size, days.length, 'one section per day')
-    assert.equal(await page.locator('main h1').first().innerText(), 'All clips', 'the header says what is listed')
-    assert.ok((await page.locator('main > div > header').innerText()).includes('22 clips'), 'and how many')
-    assert.equal(await sidebar.getByRole('button', { name: 'All clips', exact: true }).getAttribute('aria-current'), 'page', 'opens on every clip')
-    // Names only: the list's own header has the count.
-    assert.equal(await sidebar.getByRole('button', { name: 'Counter-Strike 2', exact: true }).count(), 1, 'a game by name, without a count')
-    assert.equal(await sidebar.locator('.item.current').evaluate((el) => getComputedStyle(el).fontWeight), '500', 'the current row is medium')
-    assert.equal(await sidebar.getByRole('button', { name: 'Favorites', exact: true }).evaluate((el) => getComputedStyle(el).fontWeight), '400', 'the others regular')
+    assert.equal(await page.locator('main h1').first().innerText(), 'All clips', 'the heading identifies the listed collection')
+    assert.ok((await page.locator('.library-toolbar').innerText()).includes('22 clips'), 'and how many')
+    assert.equal(await libraryNav.getByRole('button', { name: 'All clips', exact: true }).getAttribute('aria-current'), 'page', 'opens on every clip')
+    assert.equal(await gameChoice(page, 'Counter-Strike 2').count(), 1, 'games are named in the collection navigation')
     assert.equal(await cards(), 22, 'every clip is in the grid')
     assert.equal(await page.getByRole('button', { name: /^Open .* screenshot/ }).count(), 0, 'screenshots stay with their game')
 
     // A game's picture that fails to load leaves the game's initial, and
     // loads on the next listing (here: coming back to the window).
-    const icon = sidebar.locator('img[src*="library_600x900"]').first()
-    assert.equal(await icon.count(), 0, 'no broken picture')
+    const icon = gameChoice(page, 'Counter-Strike 2').locator('img[src*="library_600x900"]')
+    await icon.waitFor({ state: 'hidden' })
+    assert.equal(await icon.count(), 0, 'failed game art leaves no broken picture')
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await page.waitForFunction(() => {
-      const img = document.querySelector('aside img[src*="library_600x900"]')
+      const img = document.querySelector('aside img[src*="%2F730%2F"]')
       return img?.complete && img.naturalWidth > 0
     })
     assert.match(await icon.getAttribute('src'), /\?retry=1$/)
+    await page.keyboard.press('Escape')
+
+    await cardInteractions(page)
 
     // Search narrows the grid; nothing found says so and offers the way back.
     await page.getByLabel('Search clips').fill('malenia')
@@ -368,66 +478,64 @@ async function runScenario(scenario, browser) {
     await page.waitForTimeout(100)
     assert.equal(await cards(), 22, 'Esc clears the search')
 
-    // One menu holds the sort, the thumbnail size and selecting.
-    await page.getByRole('button', { name: 'Library options' }).click()
+    // Display preferences share a menu; the resting toolbar stays focused on finding clips.
+    await page.getByRole('button', { name: 'View options' }).click()
     await page.waitForTimeout(150)
     await shot('library-menu')
-    await page.getByRole('menuitemradio', { name: 'Largest first' }).click()
+    await page.keyboard.press('Escape')
+    await viewOption(page, 'Largest first')
     await page.waitForTimeout(100)
     assert.equal(await page.locator('main h2').count(), 0, 'no day headings when sorted by size')
     assert.equal(await cards(), 22, 'and still every clip')
-    assert.ok((await page.locator('main > div > header').innerText()).includes('largest first'), 'the header says the sort when it is not the usual one')
-    await choose(page, 'Library options', 'Newest first', 'menuitemradio')
+    await page.getByRole('button', { name: 'View options' }).click()
+    assert.equal(await page.getByRole('menuitemradio', { name: 'Largest first' }).getAttribute('aria-checked'), 'true', 'the menu shows the current sort')
+    await page.keyboard.press('Escape')
+    await viewOption(page, 'Newest first')
 
     // Three clips to a row at this size; bigger thumbnails are fewer to a row; it is remembered.
     const columns = () => page.locator('.clip-grid > *').evaluateAll((els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().x))).size)
     const cardWidth = () => page.locator('.clip-grid > *').first().evaluate((el) => el.getBoundingClientRect().width)
-    assert.equal(await columns(), 3, 'three columns at 1280 with the navigation open')
+    assert.equal(await columns(), 3, 'three medium columns at 1280')
     const medium = await cardWidth()
-    await choose(page, 'Library options', 'Large', 'menuitemradio')
+    await viewOption(page, 'Large thumbnails')
     await page.waitForTimeout(100)
     assert.ok((await columns()) === 2 && (await cardWidth()) > medium, 'large thumbnails: fewer columns, wider cards')
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('reruns/prefs')).thumbSize), 'large', 'the size is kept')
-    await choose(page, 'Library options', 'Medium', 'menuitemradio')
+    await viewOption(page, 'Medium thumbnails')
+    // View preferences remain operable by keyboard through the menu.
+    await page.getByRole('button', { name: 'View options' }).click()
+    await page.getByRole('menuitemradio', { name: 'Medium thumbnails', exact: true }).focus()
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('reruns/prefs')).thumbSize), 'large', 'keyboard navigation chooses the next size')
+    await viewOption(page, 'Medium thumbnails')
     // A clip nobody named is titled by its game, as people write it; its length is in the picture's corner.
-    const titles = await page.locator('.clip-grid > * div.font-semibold').allTextContents()
+    const titles = await page.locator('.clip-grid .card-title').allTextContents()
     assert.ok(titles.includes('Elden Ring') && !titles.includes('ELDEN RING'), `an untitled clip is titled by its game, in natural case: ${titles.slice(0, 3)}`)
     assert.ok(!titles.some((t) => /^Clip ·/.test(t)), 'no card is titled "Clip · time"')
     assert.match(await page.locator('.clip-grid .frame span').first().innerText(), /^\d+:\d\d$/, 'the length is on the picture')
 
-    // A game in the navigation lists its clips, and a card there doesn't say the game again.
-    await sidebar.getByRole('button', { name: /^Hades II/ }).click()
+    // A game filter lists its clips, and a card there doesn't say the game again.
+    await selectGame(page, 'Hades II')
     assert.equal(await cards(), 3, "only that game's clips")
-    assert.equal(await sidebar.getByRole('button', { name: /^Hades II/ }).getAttribute('aria-current'), 'page', 'the listed game is the current one')
-    assert.equal(await page.locator('main h1').first().innerText(), 'Hades II', 'the header names the game')
+    assert.equal(await gameChoice(page, 'Hades II').getAttribute('aria-current'), 'page', 'the current game remains visible')
+    assert.equal(await page.locator('main h1').first().innerText(), 'Hades II', 'the heading names the game')
     assert.ok(!(await page.locator('.clip-grid').first().innerText()).includes('Hades'), 'no game name on a card in its own list')
-    // The navigation is 216 px with names; collapsed it is 72 px of icons that name themselves.
-    assert.equal((await page.locator('aside').boundingBox()).width, 216, 'the navigation is 216 px open')
-    await page.getByRole('button', { name: 'Collapse navigation' }).click()
-    await page.waitForTimeout(300)
-    assert.equal((await page.locator('aside').boundingBox()).width, 72, 'and 72 px collapsed')
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('reruns/prefs')).navCollapsed), true, 'which is remembered')
-    await sidebar.getByRole('button', { name: /^Elden Ring/ }).hover()
-    assert.ok((await page.getByRole('tooltip').innerText()).includes('Elden Ring'), 'the icon under the pointer is named')
-    await page.getByRole('button', { name: 'Expand navigation' }).click()
-    await page.waitForTimeout(300)
-    assert.equal((await page.locator('aside').boundingBox()).width, 216, 'and opens again')
-    // "Not a game", from the library's menu: gone at once, stays gone, back to every clip.
-    await choose(page, 'Library options', 'Hades II is not a game')
+    // Game-specific actions are separate from library view options.
+    await choose(page, 'Library actions', 'Hades II is not a game')
     await page.getByText('Ignoring Hades II').waitFor()
     await page.waitForTimeout(200)
-    assert.equal(await sidebar.getByRole('button', { name: /^Hades II/ }).count(), 0, 'game removed')
-    assert.equal(await sidebar.getByRole('button', { name: /^Counter-Strike 2/ }).count(), 1, 'others stay')
-    assert.equal(await sidebar.getByRole('button', { name: /^All clips/ }).getAttribute('aria-current'), 'page', 'back to every clip')
+    assert.equal(await gameChoice(page, /^Hades II/).count(), 0, 'game removed')
+    assert.equal(await gameChoice(page, /^Counter-Strike 2/).count(), 1, 'others stay')
+    assert.equal(await libraryNav.getByRole('button', { name: /^All clips/ }).getAttribute('aria-current'), 'page', 'back to every clip')
 
     // Screenshots show among their game's clips, open in the library's
     // place, copy as a file, and delete with Undo like clips.
-    const elden = sidebar.getByRole('button', { name: /^Elden Ring/ })
-    await elden.click()
+    await selectGame(page, 'Elden Ring')
     const shots = page.getByRole('button', { name: /^Open Elden Ring screenshot/ })
     await shots.first().waitFor()
     assert.equal(await shots.count(), 2, "both screenshots among the game's clips")
-    assert.ok(await page.getByText(/^Played \d/).first().isVisible(), 'a day says how long the game was played')
+    assert.equal(await page.locator('main').getByText(/\d(?:h|m) played/).count(), 0, 'library sections omit play-time counters')
     await page.waitForFunction(() => {
       const img = document.querySelector('main img[src$="?thumb"]')
       return img?.complete && img.naturalWidth > 0
@@ -443,23 +551,32 @@ async function runScenario(scenario, browser) {
     assert.match(await page.evaluate(() => window.__copied), /\.png$/, 'the PNG went to copy_clip')
     await page.keyboard.press('Escape')
     assert.equal(await viewer.count(), 0, 'Esc closes the screenshot')
-    assert.equal(await elden.getAttribute('aria-current'), 'page', "and stays on the game's clips")
+    assert.equal(await gameChoice(page, 'Elden Ring').getAttribute('aria-current'), 'page', "and stays on the game's clips")
     assert.match(await page.evaluate(() => document.activeElement.getAttribute('aria-label') ?? ''), /^Open Elden Ring screenshot/, 'focus is back on the card it was opened from')
     await page.screenshot({ path: path.join(out, 'game-screenshots.png') })
-    await page.getByRole('button', { name: 'Delete screenshot' }).first().click()
+    await cardAction(page, page.locator('.clip-grid > *').filter({ has: page.getByRole('button', { name: /^Open Elden Ring screenshot/ }) }).first(), 'Delete', true)
     await page.getByText('Screenshot deleted').waitFor()
     assert.equal(await shots.count(), 1, 'a deleted screenshot vanishes at once')
     await page.getByRole('button', { name: 'Undo' }).click()
     await page.waitForFunction(() => document.querySelectorAll('[aria-label^="Open Elden Ring screenshot"]').length === 2)
-    await sidebar.getByRole('button', { name: /^All clips/ }).click()
+    await libraryNav.getByRole('button', { name: /^All clips/ }).click()
+    await selectGame(page, 'All games')
   }
   // The window's own buttons show only where the system frame is off.
   assert.equal(await page.getByRole('button', { name: 'Close', exact: true }).count(), scenario === 'full' ? 1 : 0)
   if (scenario === 'empty') {
-    await page.getByRole('button', { name: 'Choose screen', exact: true }).waitFor()
-    // Nothing is set up yet (no screen, no clip), so no step shows as done.
-    assert.equal(await page.locator('ol [data-ok="true"]').count(), 0, 'no step shows as done before it is')
-    assert.equal(await page.getByRole('button', { name: 'Save replay' }).count(), 0, 'no Save replay with nothing to save')
+    await page.getByRole('region', { name: 'Capture', exact: true }).getByRole('button', { name: 'Choose screen', exact: true }).waitFor()
+    const start = page.getByRole('region', { name: 'Getting started', exact: true })
+    await start.getByRole('heading', { name: 'No clips yet', exact: true }).waitFor()
+    assert.ok((await start.innerText()).includes('Press F8 while playing to save a clip.'), 'the empty library explains its configured shortcut')
+    assert.equal(await page.getByRole('button', { name: 'Save clip', exact: true }).count(), 0, 'no Save replay before a screen is chosen')
+    await start.getByRole('button', { name: 'Choose screen', exact: true }).click()
+    await page.waitForFunction(() => window.__calls.includes('choose_screen'))
+    await start.getByRole('button', { name: 'Change hotkey', exact: true }).click()
+    await page.getByRole('heading', { name: 'Hotkeys', exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Back to clips', exact: true }).click()
+    await start.getByRole('button', { name: 'Clips folder', exact: true }).click()
+    await page.getByRole('heading', { name: 'Storage', exact: true }).waitFor()
     await page.close()
     return
   }
@@ -470,7 +587,7 @@ async function runScenario(scenario, browser) {
     await page.waitForTimeout(300)
     await shot('scrolled')
     const n = await cards()
-    const height = await page.evaluate(() => document.querySelector('main > div > div.overflow-y-auto').scrollHeight)
+    const height = await page.evaluate(() => document.querySelector('.library-scroll').scrollHeight)
     assert.ok(n > 0 && n < 60, `virtual grid should window ${data.list_clips.length} clips, rendered ${n}`)
     assert.ok(height > 20_000 && height < 200_000, `grid height ${height}px is wrong for ${data.list_clips.length} clips`)
     // The rows drawn are the ones in view: a card and a day heading are on screen.
@@ -482,39 +599,55 @@ async function runScenario(scenario, browser) {
 
   await shot('clips')
   const before = await cards()
-  // Hovering a card brings up its actions beside its text: nothing moves.
+  // A card keeps its actions and metadata in place while its picture responds to hover.
   const hovered = page.locator('.clip-grid > *').nth(1)
   const at = await hovered.boundingBox()
+  const caption = await hovered.locator('.card-caption').boundingBox()
   await hovered.hover()
   await page.waitForTimeout(200)
+  assert.equal(await hovered.locator('.media-tools').evaluate((el) => getComputedStyle(el).opacity), '1', 'hover reveals the clip actions')
   await shot('clips-hover')
   assert.deepEqual(await hovered.boundingBox(), at, 'a hovered card keeps its place and size')
-  assert.equal(await hovered.getByRole('button').count(), 4, 'open, copy, delete, favorite')
+  assert.deepEqual(await hovered.locator('.card-caption').boundingBox(), caption, 'hover does not replace or move the clip caption')
+  assert.equal(await hovered.getByRole('button').count(), 3, 'open, copy and more actions')
   // A right-click opens the card's menu; Esc closes the menu and nothing else.
   await hovered.click({ button: 'right' })
   const context = page.getByRole('menu', { name: 'Clip actions' })
   await context.getByRole('menuitem', { name: 'Show in folder' }).waitFor()
+  assert.ok(await context.locator('[role^="menuitem"]').last().evaluate((el) => {
+    const r = el.getBoundingClientRect()
+    return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight && el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+  }), 'the context menu keeps its final action in view and reachable above the workspace')
   await shot('clips-context')
   await page.keyboard.press('Escape')
   assert.equal(await context.count(), 0, 'Esc closes the menu')
+  // Opening a fixed menu must tolerate a queued scroll from bringing its
+  // trigger into view, but genuinely moving its source still dismisses it.
+  await hovered.getByRole('button', { name: 'Clip actions', exact: true }).click()
+  await context.getByRole('menuitem', { name: 'Delete', exact: true }).waitFor()
+  await page.locator('.library-scroll').evaluate((el) => el.scrollBy(0, 30))
+  await context.waitFor({ state: 'hidden' })
+  await page.locator('.library-scroll').evaluate((el) => el.scrollTo(0, 0))
   // The arrow keys move between cards.
   await page.locator('.clip-open').first().focus()
   await page.keyboard.press('ArrowRight')
   assert.equal(await page.evaluate(() => [...document.querySelectorAll('.clip-open')].indexOf(document.activeElement)), 1, 'Right moves to the next card')
 
+  await quickCopy(page)
+
   // Selection, bulk delete, undo.
-  await choose(page, 'Library options', 'Select clips')
+  await choose(page, 'Library actions', 'Select clips')
   await page.getByRole('button', { name: /^Select .* clip/ }).nth(1).click()
   await page.getByRole('button', { name: /^Select .* clip/ }).nth(3).click()
   await page.waitForTimeout(200)
   await shot('clips-select')
-  // The capture strip itself becomes the selection's bar: one bar, on the bottom edge.
+  // Selection actions stay beside the library, while replay capture remains available.
   const strip = page.getByRole('toolbar', { name: 'Selection actions' })
-  assert.equal(await strip.evaluate((el) => el.tagName), 'FOOTER', 'the selection bar is the capture strip')
   assert.match(await strip.innerText(), /2 selected\s*\d+ MB/, 'it says how many and how much')
   const box = await strip.boundingBox()
-  assert.deepEqual([box.height, box.y + box.height], [44, 800], '44 px on the bottom edge')
-  assert.equal(await page.getByRole('button', { name: 'Save replay' }).count(), 0, 'in place of Save replay, not beside it')
+  const toolbarBounds = await page.locator('.library-toolbar').boundingBox()
+  assert.equal(box.y, toolbarBounds.y + toolbarBounds.height, 'selection actions follow the library toolbar')
+  assert.ok(await page.getByRole('region', { name: 'Capture', exact: true }).getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), 'replay capture stays available during selection')
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await page.waitForTimeout(200)
   assert.equal(await cards(), before - 2, 'deleted clips vanish at once')
@@ -530,11 +663,18 @@ async function runScenario(scenario, browser) {
   assert.equal(await strip.count(), 0, 'Esc stops selecting')
 
   // Favorites, from the navigation.
-  await sidebar.getByRole('button', { name: /^Favorites/ }).click()
+  await libraryNav.getByRole('button', { name: /^Favorites/ }).click()
   await page.waitForTimeout(200)
   assert.ok((await cards()) > 0 && (await cards()) < before, 'Favorites narrows the grid')
   await shot('clips-favorites')
-  await sidebar.getByRole('button', { name: /^All clips/ }).click()
+  await selectGame(page, 'Elden Ring')
+  assert.equal(await libraryNav.getByRole('button', { name: 'Favorites', exact: true }).getAttribute('aria-current'), 'page', 'choosing a game keeps the Favorites collection')
+  assert.ok((await cards()) > 0, 'the game has favorite clips')
+  assert.ok((await page.locator('.clip-open').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).every((name) => name.includes('Elden Ring')), 'Favorites and game filtering compose')
+  await selectGame(page, 'All games')
+  assert.equal(await libraryNav.getByRole('button', { name: 'Favorites', exact: true }).getAttribute('aria-current'), 'page', 'clearing the game filter preserves Favorites')
+  await libraryNav.getByRole('button', { name: /^All clips/ }).click()
+  assert.equal(await page.getByRole('button', { name: 'Show all games', exact: true }).count(), 0, 'All clips clears game filtering')
 
   // Viewer: playback, stepping, the menu, rename, tags, trim, copy, save.
   await page.getByRole('button', { name: /^Open .*Elden Ring clip/ }).nth(1).click()
@@ -544,21 +684,24 @@ async function runScenario(scenario, browser) {
   await shot('viewer')
   // Fullscreen covers the whole window, not the picture's place in the column.
   await page.getByRole('button', { name: 'Fullscreen', exact: true }).click()
-  assert.deepEqual(await page.locator('.player').evaluate((el) => { const b = el.getBoundingClientRect(); return [b.width, b.height] }), [1280, 800], 'fullscreen fills the window')
+  assert.deepEqual(await page.locator('.player').boundingBox(), { x: 0, y: 0, width: 1280, height: 800 }, 'fullscreen fills the whole window from its top-left corner')
+  assert.equal(await page.locator('[data-deck]').count(), 0, 'fullscreen removes the editing deck')
   await page.keyboard.press('f')
   assert.equal(await page.getByRole('button', { name: 'Fullscreen', exact: true }).count(), 1, 'F leaves fullscreen')
+  assert.equal(await page.getByRole('slider', { name: 'Trim start' }).count(), 0, 'a clip opens for review without trim handles')
+  assert.equal(await page.getByRole('button', { name: /^Save (?:trimmed|edited) copy$/ }).count(), 0, 'an unchanged saved clip does not offer another save')
   // While playing, the playhead moves every frame, not at timeupdate's ~4 Hz.
   const positions = await page.evaluate(
     () =>
       new Promise((done) => {
         const v = document.querySelector('video')
-        const head = document.querySelector('[aria-label="Timeline"] .head')
+        const seek = document.querySelector('[aria-label="Seek"]')
         const seen = new Set()
         v.muted = true
         v.play().then(() => {
           const until = performance.now() + 500
           requestAnimationFrame(function frame(now) {
-            seen.add(head.style.transform)
+            seen.add(seek.getAttribute('aria-valuenow'))
             if (now < until) requestAnimationFrame(frame)
             else {
               v.pause()
@@ -575,7 +718,7 @@ async function runScenario(scenario, browser) {
   assert.deepEqual(await dialog.boundingBox(), { x: 0, y: 32, width: 1280, height: 768 }, 'the viewer fills the window under its strip')
   assert.equal(await dialog.locator('footer').count(), 0, 'no capture strip in the viewer')
   assert.equal(await dialog.getByRole('button', { name: 'Copy clip' }).count(), 1, 'Copy clip')
-  assert.equal(await dialog.getByRole('button', { name: 'Save clip' }).count(), 1, 'and Save clip')
+  assert.equal(await dialog.getByRole('button', { name: 'Trim', exact: true }).count(), 1, 'trimming is available when needed')
   assert.match(await dialog.getByLabel('Time', { exact: true }).innerText(), /^0:0\d \/ 0:\d\d$/, 'one time readout')
   assert.equal(await dialog.getByText(/selected/).count(), 0, 'nothing says "selected" while the whole clip is')
   // Left and Right step to the clips either side without leaving it.
@@ -607,12 +750,14 @@ async function runScenario(scenario, browser) {
   await seekTo(page, 2.5)
   // Ctrl+C is Copy clip: this one is over the sharing limit, so a smaller copy goes.
   await page.keyboard.press('Control+c')
-  await page.getByText('Clip copied, under 10 MB').waitFor()
+  await page.locator('.edit-status').getByText('Clip copied, under 10 MB').waitFor()
   assert.match(await page.evaluate(() => window.__copied), /_edit\.mp4$/, 'the fitted copy went to copy_clip')
   assert.equal(await page.evaluate(() => window.__lastRender.maxMb), 10, 'fitted under the limit from Settings → Sharing')
-  assert.equal(await page.getByText('Clip copied, under 10 MB').evaluate((el) => !!el.closest('[data-deck]')), true, 'said beside the actions')
+  assert.equal(await page.locator('.edit-status').getByText('Clip copied, under 10 MB').evaluate((el) => !!el.closest('[data-deck]')), true, 'said beside the actions')
   // Marked moments: ticks on the line, [ and ] jump between them.
-  assert.equal(await page.locator('[aria-label="Timeline"] .tick').count(), 2, 'two marked moments on the strip')
+  await startTrimming(page)
+  assert.equal(await page.locator('[aria-label="Timeline"] .tick:not(.saved)').count(), 2, 'two marked moments on the strip')
+  assert.equal(await page.locator('[aria-label="Timeline"] .tick.saved').count(), 1, 'and where it was saved, apart from them')
   const nearTime = (t) =>
     page.waitForFunction((t) => Math.abs(document.querySelector('video').currentTime - t) < 0.05, t, { timeout: 3000 })
   await page.keyboard.press(']')
@@ -622,6 +767,13 @@ async function runScenario(scenario, browser) {
   await page.keyboard.press('[')
   await page.waitForTimeout(150)
   await nearTime(1.5)
+  // T keeps the frame on screen as the clip's picture; Undo puts back the one before.
+  await page.evaluate(() => document.querySelector('video').pause())
+  await page.keyboard.press('t')
+  await dialog.locator('.cover-feedback').getByText('Cover set').waitFor()
+  assert.ok(Math.abs((await page.evaluate(() => window.__patch.cover)) - 1.5) < 0.05, 'the frame on screen is the cover')
+  await dialog.getByRole('button', { name: 'Undo', exact: true }).click()
+  assert.equal(await page.evaluate(() => window.__patch.cover), -1, 'Undo clears it again')
   await page.keyboard.press('n')
   await page.keyboard.type('Malenia no-hit, take 2')
   await page.keyboard.press('Enter')
@@ -664,7 +816,6 @@ async function runScenario(scenario, browser) {
   await trimEnd.focus()
   await page.waitForTimeout(250)
   assert.equal(await trimEnd.locator('.stamp').evaluate((el) => getComputedStyle(el).opacity), '1', 'a focused handle shows its time')
-  assert.equal(await trimEnd.evaluate((el) => getComputedStyle(el, '::after').backgroundColor), 'rgb(255, 171, 123)', 'and takes the full accent')
   await page.keyboard.press('Home')
   assert.equal(await trimEnd.getAttribute('aria-valuenow'), '1.1', 'the end stops short of the start')
   // Exact points, from the menu.
@@ -675,6 +826,11 @@ async function runScenario(scenario, browser) {
   await page.getByRole('textbox', { name: 'Trim end' }).fill('0:04.5')
   await page.getByRole('button', { name: 'Apply' }).click()
   assert.equal(await trimEnd.getAttribute('aria-valuenow'), '4.5', 'typed points move the handles')
+  await dialog.getByRole('button', { name: 'Done trimming' }).click()
+  assert.equal(await trimStart.count(), 0, 'Done returns to preview without edit handles')
+  assert.ok(await dialog.getByRole('button', { name: 'Save trimmed copy', exact: true }).isVisible(), 'the pending trim remains available to save')
+  await startTrimming(page)
+  assert.deepEqual([await trimStart.getAttribute('aria-valuenow'), await trimEnd.getAttribute('aria-valuenow')], ['1', '4.5'], 'returning to Trim preserves the chosen range')
   // The library keeps its place behind the viewer, out of sight and reach.
   assert.equal(await cards(), before, 'the grid is still there')
   assert.equal(await page.locator('main').evaluate((el) => el.closest('[inert]') !== null), true, 'and inert')
@@ -693,9 +849,11 @@ async function runScenario(scenario, browser) {
     window.__lastRender = null
     window.__renderGate = new Promise((go) => (window.__renderGo = go))
   })
-  await dialog.getByRole('button', { name: 'Save clip' }).click()
-  await dialog.getByText(/Saving clip… \d+%/).waitFor()
-  assert.equal(await dialog.getByRole('button', { name: 'Save clip' }).isDisabled(), true, 'Save clip is off while it saves')
+  const announcement = await dialog.locator('[role="status"][aria-atomic="true"]').elementHandle()
+  await dialog.getByRole('button', { name: /^Save (?:trimmed|edited) copy$/ }).click()
+  await dialog.locator('.edit-status').getByText(/Saving clip… \d+%/).waitFor()
+  assert.ok(await announcement.evaluate((el) => el.isConnected && el.textContent.includes('Saving clip')), 'the existing live region announces progress')
+  assert.equal(await dialog.getByRole('button', { name: /^Save (?:trimmed|edited) copy$/ }).isDisabled(), true, 'Save clip is off while it saves')
   assert.equal(await dialog.getByRole('button', { name: 'Copy clip' }).isDisabled(), true, 'and so is Copy clip')
   assert.equal(await dialog.getByRole('button', { name: 'Cancel' }).count(), 1, 'with a Cancel')
   await shot('viewer-saving')
@@ -703,7 +861,7 @@ async function runScenario(scenario, browser) {
     window.__renderGo()
     window.__renderGate = null
   })
-  await dialog.getByText('Clip saved').waitFor()
+  await dialog.locator('.edit-status').getByText('Clip saved').waitFor()
   const rendered = await page.evaluate(() => window.__lastRender)
   assert.equal(rendered.maxMb, null, 'a saved clip is not shrunk unless Settings → Sharing says so')
   // The clip starts with game and mic mixed: levels for the two sources
@@ -714,13 +872,25 @@ async function runScenario(scenario, browser) {
   assert.equal(rendered.slow, null, 'no slow motion unless asked')
   // A failure says what and why, keeps the selection, and offers the same again.
   await page.evaluate(() => (window.__renderError = 'the encoder stopped'))
-  await dialog.getByRole('button', { name: 'Save clip' }).click()
-  await dialog.getByText("Couldn't save the clip: the encoder stopped").waitFor()
+  await dialog.getByRole('button', { name: /^Save (?:trimmed|edited) copy$/ }).click()
+  await dialog.locator('.edit-status').getByText("Couldn't save the clip: the encoder stopped").waitFor()
   await shot('viewer-failed')
   assert.equal(await trimStart.getAttribute('aria-valuenow'), '1', 'the selection is kept')
-  await page.evaluate(() => (window.__renderError = null))
+  // A retry belongs to the failed source even if another clip is now open.
+  await page.keyboard.press('Escape')
+  await page.locator('.media-card[data-clip-path$="/clip-2.mp4"] .clip-open').click()
+  await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
+  const reviewingDuringRetry = await playing()
+  await page.evaluate(() => { window.__renderError = null; window.__lastRender = null })
   await dialog.getByRole('button', { name: 'Try again' }).click()
-  await dialog.getByText('Clip saved').waitFor()
+  await dialog.locator('.edit-status').getByText('Clip saved').waitFor()
+  const retried = await page.evaluate(() => window.__lastRender)
+  assert.equal(retried.path, rendered.path, 'Save retry stays pinned to the original clip after navigation')
+  assert.deepEqual([retried.start, retried.end], [1, 4.5], 'Save retry keeps the original trim')
+  assert.equal(await playing(), reviewingDuringRetry, 'the background retry leaves the current preview in place')
+  await page.keyboard.press('Escape')
+  await page.locator('.media-card[data-clip-path$="/clip-1.mp4"] .clip-open').click()
+  await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
   // Vertical 9:16 for Shorts and TikTok, with a slow-motion range: both from the menu.
   await choose(page, 'Clip options', 'Vertical 9:16', 'menuitemcheckbox')
   await page.getByRole('slider', { name: 'Vertical frame position' }).waitFor()
@@ -730,13 +900,13 @@ async function runScenario(scenario, browser) {
   await page.waitForTimeout(150)
   await shot('viewer-vertical-slow')
   await page.evaluate(() => (window.__lastRender = null))
-  await dialog.getByRole('button', { name: 'Save clip' }).click()
+  await dialog.getByRole('button', { name: /^Save (?:trimmed|edited) copy$/ }).click()
   await page.waitForFunction(() => window.__lastRender)
   const shaped = await page.evaluate(() => window.__lastRender)
   assert.equal(shaped.vertical, 0.5, 'vertical frame centred by default')
   assert.equal(shaped.slow.factor, 2, 'half speed')
   assert.ok(shaped.slow.from > 1 && shaped.slow.to < 4.5 && shaped.slow.from < shaped.slow.to, 'slow range inside the trim')
-  await dialog.getByText('Clip saved').waitFor()
+  await dialog.locator('.edit-status').getByText('Clip saved').waitFor()
   // Back, and the library is as it was left: the same card has focus.
   await page.keyboard.press('Escape')
   assert.equal(await page.locator('video').count(), 0, 'Esc closes the viewer')
@@ -746,7 +916,8 @@ async function runScenario(scenario, browser) {
   await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
   assert.equal(await trimStart.getAttribute('aria-valuenow'), '1', 'the trim is kept for the session')
   await dialog.getByRole('button', { name: 'Reset' }).click()
-  assert.equal(await trimStart.getAttribute('aria-valuenow'), '0', 'Reset selects the whole clip')
+  assert.equal(await trimStart.count(), 0, 'Reset returns to the simple whole-clip preview')
+  assert.equal(await dialog.getByRole('button', { name: /^Save (?:trimmed|edited) copy$/ }).count(), 0, 'Reset removes the redundant save action')
   assert.equal(await dialog.getByRole('button', { name: 'Reset' }).count(), 0, 'and Reset goes with it')
   await page.keyboard.press('Escape')
   // A clip already under the limit goes to the clipboard as it is, at once.
@@ -757,7 +928,7 @@ async function runScenario(scenario, browser) {
   const copyWidth = (await copyButton.boundingBox()).width
   await page.evaluate(() => (window.__copyError = 'the clipboard is busy'))
   await copyButton.click()
-  await dialog.getByText("Couldn't copy the clip: the clipboard is busy").waitFor()
+  await dialog.locator('.edit-status').getByText("Couldn't copy the clip: the clipboard is busy").waitFor()
   assert.equal(await dialog.getByRole('button', { name: 'Copied' }).count(), 0, 'a failed copy never says Copied')
   await page.waitForTimeout(250)
   await shot('viewer-copy-failed')
@@ -773,20 +944,28 @@ async function runScenario(scenario, browser) {
   await dialog.getByRole('button', { name: 'Copy clip' }).waitFor({ timeout: 3000 })
   await page.keyboard.press('Escape')
 
-  // The capture strip: one sentence, Save replay while a game records, and
-  // "not a game" in its menu, never beside the game's name.
-  const capture = page.locator('footer[aria-label="Capture"]')
-  await capture.getByText('Capturing Elden Ring').waitFor()
-  assert.equal(await capture.getByRole('button', { name: 'Save replay' }).isEnabled(), true, 'Save replay works while a game records')
+  // A single capture command remains available without live counters in the library.
+  const capture = page.getByRole('region', { name: 'Capture', exact: true })
+  await capture.getByText('Elden Ring', { exact: true }).waitFor()
+  await capture.getByRole('status').getByText('Clipping', { exact: true }).waitFor()
+  assert.equal(await capture.getByText(/\d+s ready/).count(), 0, 'there is no live buffer counter')
+  assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), true, 'Save clip works while a game records')
   assert.equal(await capture.getByText(/not a game/i).count(), 0, '"not a game" is not shown beside the game')
-  assert.equal(await capture.locator('kbd').count(), 0, 'no key caps')
+  assert.equal(await capture.getByRole('progressbar').count(), 0, 'there is no buffer meter')
+  assert.equal(await page.locator('.state-dot').count(), 0, 'the library has no blinking status indicator')
+  await fire('status-changed', { ...data.get_status, session_start_ms: null, buffered_seconds: 0 })
+  assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), false, 'an empty replay buffer cannot be saved')
+  await fire('status-changed', { ...data.get_status, state: 'waiting', game: null, session_start_ms: null, buffered_seconds: 0 })
+  assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), false, 'Save clip stays disabled while waiting for a game')
+  await fire('status-changed', data.get_status)
+  assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), true, 'an available replay enables Save clip again')
   await choose(page, 'Capture options', 'Elden Ring is not a game')
   await page.getByText('Ignoring ELDEN RING').waitFor()
 
-  // Settings: its pages down the left, one column of rows.
+  // Settings use the sidebar while capture remains available below them.
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settingsPage = (name) => page.getByRole('navigation', { name: 'Settings pages' }).getByRole('button', { name, exact: true })
-  assert.deepEqual(await page.getByRole('navigation', { name: 'Settings pages' }).getByRole('button').allInnerTexts(), ['Back to clips', 'General', 'Recording', 'Audio', 'Hotkeys', 'Storage', 'Sharing', 'Appearance'], 'Back to clips, then the pages, in the sidebar')
+  assert.deepEqual(await page.getByRole('navigation', { name: 'Settings pages' }).getByRole('button').allInnerTexts(), ['Back to clips', 'General', 'Recording', 'Audio', 'Hotkeys', 'Storage', 'Sharing', 'Appearance'], 'Back to clips, then the settings pages')
   await shot('settings-general')
   await settingsPage('Appearance').click()
   await page.waitForTimeout(150)
@@ -802,21 +981,22 @@ async function runScenario(scenario, browser) {
   await settingsPage('Recording').click()
   await page.waitForTimeout(150)
   await shot('settings-recording')
-  // The last row clears the capture strip, the page scrolls under its
-  // header, and the list of pages stays where it is.
+  // Settings scroll below their header while their navigation and capture stay in view.
   const scroller = page.locator('.settings > div')
   await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
   await shot('settings-bottom')
   const pane = await scroller.boundingBox()
   const head = await page.locator('.settings > header').boundingBox()
   assert.ok(pane.y >= head.y + head.height, 'the page scrolls below its header')
-  assert.equal(await page.locator('footer').isVisible(), false, 'no capture strip in Settings')
-  assert.equal(pane.y + pane.height, 800, 'the page runs to the window\'s bottom edge')
-  assert.equal(await page.locator('main nav').count(), 0, 'one column of navigation: the sidebar\'s')
-  assert.equal(await page.locator('aside').getByRole('button', { name: 'Back to clips' }).count(), 1, 'with Back to clips')
+  assert.ok(await capture.isVisible(), 'capture stays visible in Settings')
+  const settingsBounds = await page.locator('main').boundingBox()
+  assert.equal(pane.y + pane.height, settingsBounds.y + settingsBounds.height, 'the page runs to the workspace bottom edge')
+  assert.equal(await page.getByRole('navigation', { name: 'Settings pages' }).count(), 1, 'one local settings navigation')
+  assert.equal(await page.getByRole('navigation', { name: 'Settings pages' }).getByRole('button', { name: 'Back to clips' }).count(), 1, 'with Back to clips')
   const last = await page.locator('.settings section').last().boundingBox()
   assert.ok(last.y + last.height <= pane.y + pane.height, 'the last row clears the strip')
-  assert.ok((await settingsPage('General').boundingBox()).y >= pane.y, 'the pages stay in view while the page scrolls')
+  const categoryBounds = await settingsPage('General').boundingBox()
+  assert.ok(categoryBounds.x + categoryBounds.width <= pane.x, 'settings navigation stays beside the scrolling page')
   await scroller.evaluate((el) => el.scrollTo(0, 0))
   assert.equal(await page.getByRole('button', { name: 'Detect ELDEN RING again' }).count(), 1, 'ignored app listed')
   await page.getByText('HDR display').waitFor()
@@ -839,31 +1019,36 @@ async function runScenario(scenario, browser) {
   )
   await favorites.click()
   await shot('settings-storage')
-  // The capture strip belongs to the library: back there for the recorder's states.
+  // Back to the library for the recorder's states.
   await page.getByRole('button', { name: 'Back to clips' }).click()
   // Capture failing mid-game: the strip says so instead of "waiting".
   await fire('status-changed', { state: 'retrying', game: 'Overwatch', steam_app_id: null, session_start_ms: Date.now(), buffered_seconds: 0, replay_seconds: 30, encoder: 'nvd3d11h264enc', capture_path: null, error: 'Could not encode stream: Failed to open session', backend: 'windows', needs_screen: false, hdr: null, hdr_tonemapped: false })
-  await page.getByText("Can't capture Overwatch, retrying").waitFor()
+  await capture.getByText('Capture interrupted', { exact: true }).waitFor()
+  await capture.getByText('Retrying…', { exact: true }).waitFor()
   assert.equal(await page.getByText('Waiting for a game').count(), 0, 'no "waiting" while a game is failing')
-  assert.equal(await page.getByRole('button', { name: 'Save replay' }).count(), 0, 'no Save replay while nothing records')
+  assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).count(), 0, 'no Save replay while nothing records')
   await shot('status-retrying')
   // NVENC refused at the game's start: AMD records it, and the strip says so.
   await fire('status-changed', { state: 'recording', game: 'Fortnite', steam_app_id: null, session_start_ms: Date.now(), buffered_seconds: 30, replay_seconds: 30, encoder: 'amfh264enc', encoder_fallback: { preferred: 'nvenc', using: 'amf', reason: 'Failed to open session', set_aside: false }, capture_path: 'zerocopy', error: null, backend: 'windows', needs_screen: false, hdr: null, hdr_tonemapped: false })
-  const fallback = page.getByText('on AMD AMF')
-  await fallback.waitFor()
-  const why = await fallback.getAttribute('title')
-  assert.ok(why.includes('NVIDIA NVENC refused to start (Failed to open session)'), `fallback says why: ${why}`)
-  assert.ok(why.includes('tries NVIDIA NVENC again at the next game'), 'and that the next game tries again')
+  await capture.getByText('Fortnite', { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Capture options', exact: true }).click()
+  const why = await page.getByRole('menu', { name: 'Capture options' }).innerText()
+  assert.ok(why.includes('NVIDIA NVENC') && why.includes('Failed to open session'), `fallback says why: ${why}`)
+  assert.ok(why.includes('next game'), 'and that the next game tries again')
+  await page.keyboard.press('Escape')
   await shot('status-encoder-fallback')
   // Set aside after failing while recording: no promise of the next game.
   await fire('status-changed', { state: 'recording', game: 'Fortnite', steam_app_id: null, session_start_ms: Date.now(), buffered_seconds: 30, replay_seconds: 30, encoder: 'amfh264enc', encoder_fallback: { preferred: 'nvenc', using: 'amf', reason: 'Failed to open session', set_aside: true }, capture_path: 'zerocopy', error: null, backend: 'windows', needs_screen: false, hdr: null, hdr_tonemapped: false })
-  await page.waitForFunction(() => document.querySelector('[title*="kept failing while recording"]'))
-  const aside = await page.getByText('on AMD AMF').getAttribute('title')
-  assert.ok(aside.includes('records with AMD AMF until it restarts'), `set aside says when: ${aside}`)
-  assert.ok(!aside.includes('next game'), 'no promise of the next game')
+  await page.getByRole('button', { name: 'Capture options', exact: true }).click()
+  const fallbackNote = await page.getByRole('menu', { name: 'Capture options' }).innerText()
+  assert.ok(fallbackNote.includes('after Reruns restarts'), `set aside says when: ${fallbackNote}`)
+  assert.ok(!fallbackNote.includes('next game'), 'no promise of the next game')
+  await page.keyboard.press('Escape')
   // The usual encoder: no note.
   await fire('status-changed', { state: 'recording', game: 'Fortnite', steam_app_id: null, session_start_ms: Date.now(), buffered_seconds: 30, replay_seconds: 30, encoder: 'nvd3d11h264enc', encoder_fallback: null, capture_path: 'zerocopy', error: null, backend: 'windows', needs_screen: false, hdr: null, hdr_tonemapped: false })
-  await page.waitForFunction(() => !document.body.innerText.includes('on AMD AMF'))
+  await page.getByRole('button', { name: 'Capture options', exact: true }).click()
+  assert.ok(!(await page.getByRole('menu', { name: 'Capture options' }).innerText()).includes('AMD AMF'), 'the usual encoder has no fallback note')
+  await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await settingsPage('Audio').click()
   await page.waitForTimeout(150)
@@ -897,7 +1082,7 @@ async function runScenario(scenario, browser) {
   await page.getByText('Reruns 0.1.0').waitFor()
   await page.getByRole('button', { name: 'Check now' }).click()
   await page.getByText('Version 0.2.0 available.').waitFor()
-  assert.equal(await page.locator('aside').getByRole('button', { name: 'Update to 0.2.0' }).count(), 1, 'the navigation shows the update')
+  assert.equal(await page.locator('aside').getByRole('button', { name: 'Update to 0.2.0' }).count(), 1, 'the sidebar shows the update')
   await page.getByRole('heading', { name: 'Updates' }).scrollIntoViewIfNeeded()
   await shot('settings-updates')
   // Settings installs through the same prompt as the navigation.
@@ -917,11 +1102,12 @@ async function runScenario(scenario, browser) {
   await shot('settings-logs')
   // An update found at start-up: the prompt opens once; "Later" leaves a
   // still icon in the navigation that opens it again.
+  const updatesBeforeEvent = await page.evaluate(() => window.__calls.filter((c) => c === 'found_update').length)
   await fire('update-available', { version: '1.2.0', current_version: '1.1.0', notes: null, prompt: true })
   await page.getByRole('dialog', { name: 'Reruns 1.2.0' }).waitFor()
   assert.equal(
     await page.evaluate(() => window.__calls.filter((c) => c === 'found_update').length),
-    2,
+    updatesBeforeEvent + 1,
     'a prompt shown from the event is marked as shown',
   )
   await shot('update-prompt')
@@ -961,22 +1147,27 @@ async function overlayScenario(browser) {
   await page.waitForTimeout(300)
   assert.equal(await page.locator('#title').textContent(), "Recording Tom Clancy's Rainbow Six Siege")
   assert.equal(await page.locator('#detail').textContent(), 'Press F8 to clip')
-  assert.ok(await page.locator('.rec').isVisible(), 'recording dot on ready')
+  assert.equal(await page.locator('#popup').getAttribute('data-kind'), 'ready', 'the popup retains the event kind')
+  await page.waitForFunction(() => document.querySelector('.mark img')?.naturalWidth > 0)
+  assert.equal(await page.locator('.mark img').getAttribute('src'), '/brand-mark.svg', 'the popup uses the app mark')
+  assert.equal(await page.locator('.rec, .state-dot').count(), 0, 'the popup has no recording LED')
   await page.screenshot({ path: path.join(out, 'overlay-ready.png') })
 
-  // Each kind has its own glyph.
-  for (const [kind, title, glyph] of [['screenshot', 'Screenshot saved', '.camera'], ['marked', 'Moment marked', '.flag']]) {
+  // Event-specific text carries the meaning while the app mark stays consistent.
+  for (const [kind, title] of [['screenshot', 'Screenshot saved'], ['marked', 'Moment marked']]) {
     await fire({ kind, title, detail: 'Fortnite', key: null, ms: 1500 })
     await page.waitForTimeout(100)
-    assert.ok(await page.locator(glyph).isVisible(), `${glyph} on ${kind}`)
-    assert.equal(await page.locator('.glyph:visible').count(), 1, `one glyph on ${kind}`)
+    assert.equal(await page.locator('#popup').getAttribute('data-kind'), kind, `correct event kind on ${kind}`)
+    assert.equal(await page.locator('#title').textContent(), title)
+    assert.equal(await page.locator('#detail').textContent(), 'Fortnite')
+    assert.ok(await page.locator('.mark img').isVisible(), `the app mark remains on ${kind}`)
   }
 
   await fire({ kind: 'saved', title: 'Clip saved', detail: "Last 30\u2009s · Tom Clancy's Rainbow Six Siege", key: null, ms: 900 })
   await page.waitForTimeout(500)
   assert.equal(await page.locator('#title').textContent(), 'Clip saved')
-  assert.ok(await page.locator('.check').isVisible(), 'check mark on saved')
-  assert.equal(await page.locator('.rec').isVisible(), false, 'no recording dot on saved')
+  assert.equal(await page.locator('#popup').getAttribute('data-kind'), 'saved', 'the popup reports a saved clip')
+  assert.ok(await page.locator('.mark img').isVisible(), 'the app mark remains on saved clips')
   assert.ok(!(await page.locator('#detail').textContent()).includes('Press'), 'no key hint on saved')
   await page.screenshot({ path: path.join(out, 'overlay-saved.png') })
   // Fades out on its own before the backend hides the window.
@@ -1037,7 +1228,7 @@ async function uxScenario(browser) {
   // Nothing is on disk here.
   await page.route('http://127.0.0.1:2/**', (r) => r.fulfill({ status: 404 }))
   await page.goto(`http://localhost:${PORT}/`)
-  const sidebar = page.getByRole('navigation', { name: 'Library' })
+  const libraryNav = page.getByRole('navigation', { name: 'Library' })
   const cards = () => page.locator('.clip-grid > *').count()
   await page.locator('.clip-grid > *').first().waitFor()
   const before = await cards()
@@ -1046,13 +1237,13 @@ async function uxScenario(browser) {
   for (let i = 0; i < 2; i++) {
     const card = page.locator('.clip-grid > *').first()
     await card.hover()
-    await card.getByRole('button', { name: 'Delete' }).click()
+    await cardAction(page, card, 'Delete')
     await page.waitForTimeout(150)
   }
   assert.equal(await cards(), before - 2, 'two clips deleted')
   const card = page.locator('.clip-grid > *').first()
   await card.hover()
-  await card.getByRole('button', { name: 'Copy file' }).click()
+  await card.getByRole('button', { name: 'Copy clip', exact: true }).click()
   await page.waitForTimeout(150)
   assert.equal(await page.getByRole('button', { name: 'Undo' }).count(), 1, 'a new toast leaves Undo up')
   await page.getByRole('button', { name: 'Undo' }).click()
@@ -1080,45 +1271,44 @@ async function uxScenario(browser) {
 
   // Settings opens over the library, which keeps its search and scroll.
   await page.getByLabel('Search clips').fill('clip')
-  await page.locator('main > div > div.overflow-y-auto').evaluate((el) => el.scrollTo(0, 400))
-  const scrolled = await page.locator('main > div > div.overflow-y-auto').evaluate((el) => el.scrollTop)
+  await page.locator('.library-scroll').evaluate((el) => el.scrollTo(0, 400))
+  const scrolled = await page.locator('.library-scroll').evaluate((el) => el.scrollTop)
   assert.ok(scrolled > 0, 'the library scrolled')
-  // A setting that fails to save says so, in Settings' own header.
+  // A setting that fails to save says so while the settings page remains open.
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.getByRole('button', { name: 'General' }).click()
   await page.evaluate(() => (window.__settingsError = "Can't write settings.json"))
   await page.getByRole('switch', { name: 'Launch at login' }).click()
-  await page.locator('.settings > header').getByText("Can't write settings.json").waitFor({ timeout: 2000 })
+  await page.getByRole('region', { name: 'Notification', exact: true }).getByText("Can't write settings.json").waitFor({ timeout: 2000 })
   await page.evaluate(() => (window.__settingsError = null))
   await page.getByRole('button', { name: 'Back to clips' }).click()
   assert.equal(await page.getByLabel('Search clips').inputValue(), 'clip', 'Back to clips keeps the search')
-  assert.equal(await page.locator('main > div > div.overflow-y-auto').evaluate((el) => el.scrollTop), scrolled, 'and the scroll')
+  assert.equal(await page.locator('.library-scroll').evaluate((el) => el.scrollTop), scrolled, 'and the scroll')
   await page.getByLabel('Search clips').fill('')
 
   // "Not a game" can be undone from its notice.
-  await sidebar.getByRole('button', { name: /^Hades II/ }).click()
-  await choose(page, 'Library options', 'Hades II is not a game')
+  await selectGame(page, 'Hades II')
+  await choose(page, 'Library actions', 'Hades II is not a game')
   await page.getByRole('button', { name: 'Undo' }).click()
-  await sidebar.getByRole('button', { name: /^Hades II/ }).waitFor({ timeout: 2000 })
+  await gameChoice(page, 'Hades II').waitFor({ timeout: 2000 })
 
   // Everything fits the narrowest window, and / goes to search.
   await page.setViewportSize({ width: 900, height: 600 })
   await page.locator('.clip-grid > *').first().waitFor()
   await page.waitForTimeout(300)
-  assert.equal(await page.locator('main > div > header').evaluate((h) => h.scrollWidth - h.clientWidth), 0, 'the header fits its controls')
-  // A narrow window collapses the navigation by itself, without a control
-  // to fight it, and without changing what was chosen.
-  assert.equal((await page.locator('aside').boundingBox()).width, 72, 'a narrow window collapses the navigation')
-  assert.equal(await page.getByRole('button', { name: /navigation$/ }).count(), 0, 'with no collapse control')
+  assert.equal(await page.locator('.library-toolbar').evaluate((h) => h.scrollWidth - h.clientWidth), 0, 'the toolbar fits its controls')
+  const navigationBounds = await page.locator('aside').boundingBox()
+  const libraryBounds = await page.locator('main').boundingBox()
+  assert.ok(navigationBounds.x + navigationBounds.width <= libraryBounds.x, 'the narrow collection navigation stays clear of the clips')
   const overflow = await page.evaluate(() => {
-    const m = document.querySelector('main > div > div.overflow-y-auto')
+    const m = document.querySelector('.library-scroll')
     return m.scrollWidth - m.clientWidth
   })
   assert.equal(overflow, 0, 'no sideways scroll at the minimum window width')
   await page.screenshot({ path: path.join(out, 'clips-narrow.png') })
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.waitForTimeout(300)
-  assert.equal((await page.locator('aside').boundingBox()).width, 216, 'and a wide one opens it again: the choice was kept')
+  assert.equal((await page.locator('main').boundingBox()).x + (await page.locator('main').boundingBox()).width, 1280, 'the wider library reaches the window edge')
   await page.keyboard.press('/')
   const search = page.getByLabel('Search clips')
   assert.ok(await search.evaluate((el) => el === document.activeElement), '/ goes to search')
@@ -1128,6 +1318,7 @@ async function uxScenario(browser) {
   // Clip cards are real buttons, so Space opens one as Enter does, and a
   // card still drags out as a file.
   assert.equal(await page.locator('[role="button"] button').count(), 0, 'no buttons inside a button')
+  await page.getByRole('button', { name: /Open .* clip/ }).first().scrollIntoViewIfNeeded()
   const box = await page.getByRole('button', { name: /Open .* clip/ }).first().boundingBox()
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await page.mouse.down()
@@ -1157,14 +1348,28 @@ async function uxScenario(browser) {
       subtree: true,
     })
   })
-  await page.getByRole('button', { name: 'Save clip' }).click()
-  await page.getByText('Clip saved').waitFor({ timeout: 1000 })
+  await startTrimming(page)
+  await page.getByRole('slider', { name: 'Trim end' }).focus()
+  await page.keyboard.press('ArrowLeft')
+  await page.getByRole('button', { name: /^Save (?:trimmed|edited) copy$/ }).click()
+  await page.locator('.edit-status').getByText('Clip saved').waitFor({ timeout: 1000 })
   assert.equal(await page.evaluate(() => window.__flashed), false, 'no shutter flash for a clip saved from the viewer')
   assert.equal(await page.getByText('Replay saved').count(), 0, 'and it is not called a replay')
   const opens = () => page.evaluate(() => window.__calls.filter((c) => c === 'open_for_edit').length)
   const opened = await opens()
   await page.getByRole('button', { name: 'Open', exact: true }).click()
   await page.waitForFunction((n) => window.__calls.filter((c) => c === 'open_for_edit').length === n + 1, opened)
+  await page.keyboard.press('Escape')
+
+  // Opening a newly saved replay from its notice removes that notice.
+  // Back therefore needs to restore focus to the corresponding clip.
+  const savedPath = '/home/u/Videos/Reruns/ELDEN RING/clip-2.mp4'
+  await page.evaluate((path) => window[`_${window.__listeners['clip-saved']}`]({ event: 'clip-saved', id: 1, payload: path }), savedPath)
+  const notice = page.getByRole('region', { name: 'Notification', exact: true })
+  await notice.getByRole('button', { name: 'Open', exact: true }).click()
+  await page.locator('video').waitFor()
+  await page.keyboard.press('Escape')
+  await page.waitForFunction((path) => document.activeElement?.closest('[data-clip-path]')?.getAttribute('data-clip-path') === path, savedPath)
   await page.close()
 }
 
@@ -1183,8 +1388,8 @@ async function worstScenario(browser) {
   const page = await browser.newPage({ viewport: { width: 900, height: 600 }, colorScheme: 'dark' })
   page.on('pageerror', (e) => { throw new Error(`page error in worst: ${e.message}`) })
   await page.addInitScript(mockBridge, data)
-  const video = fs.readFileSync(process.env.RERUNS_SHOT_CLIP || path.join(__dirname, 'fixtures', 'clip.webm'))
-  await page.route('http://127.0.0.1:1/**', (r) => r.fulfill({ status: 200, body: video, headers: { 'Content-Type': 'video/webm', 'Access-Control-Allow-Origin': '*' } }))
+  // Seeking needs the same byte-range responses as the real media server.
+  await serve(page, { failFirst: false })
   await page.route('http://127.0.0.1:2/**', (r) => {
     const made = /^\/(thumbs|sprites)\/(\d+)\.svg$/.exec(decodeURIComponent(new URL(r.request().url()).pathname.slice(1)))
     return made && frameCount ? r.fulfill({ status: 200, body: realFrame(made[1] === 'thumbs' ? 'thumb' : 'sprite', Number(made[2])), headers: JPG }) : r.fulfill({ status: 404 })
@@ -1198,7 +1403,7 @@ async function worstScenario(browser) {
     const bad = await page.evaluate(() => {
       const out = []
       if (document.documentElement.scrollWidth > innerWidth) out.push('the page scrolls sideways')
-      for (const bar of document.querySelectorAll('header, footer, [data-deck]')) {
+      for (const bar of document.querySelectorAll('header, footer, .library-toolbar, [data-deck]')) {
         if (bar.closest('[inert]') || !bar.offsetParent) continue
         // Not what is scrolled out of sight inside a strip of its own (a clip's tags).
         const clipped = (e) => {
@@ -1219,6 +1424,10 @@ async function worstScenario(browser) {
         for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
           const [a, ra] = rects[i], [c, rc] = rects[j]
           if (a.contains(c) || c.contains(a)) continue
+          // Trim and slow-motion handles deliberately sit on the seek track.
+          // Markers have a separate lane and are still checked for overlap.
+          const timelineHandle = (track, handle) => track.getAttribute('aria-label') === 'Seek' && handle.matches('.handle, .slow-marker') && track.closest('.strip') === handle.closest('.strip')
+          if (timelineHandle(a, c) || timelineHandle(c, a)) continue
           if (ra.left < rc.right - 1 && rc.left < ra.right - 1 && ra.top < rc.bottom - 1 && rc.top < ra.bottom - 1) out.push(`${bar.tagName} "${(a.getAttribute('aria-label') || a.innerText).slice(0, 20)}" overlaps "${(c.getAttribute('aria-label') || c.innerText).slice(0, 20)}"`)
         }
       }
@@ -1226,20 +1435,20 @@ async function worstScenario(browser) {
     })
     assert.deepEqual(bad, [], `${where}: ${bad.join('; ')}`)
   }
-  const sidebar = page.getByRole('navigation', { name: 'Library' })
+  const libraryNav = page.getByRole('navigation', { name: 'Library' })
 
   await shot('library')
   await fits('library at 900')
-  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(await page.locator('aside').evaluate((el) => el.textContent)), 'an emoji-first name keeps its whole first character')
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(await libraryNav.evaluate((el) => el.textContent)), 'an emoji-first name keeps its whole first character')
   assert.ok((await page.locator('main').innerText()).includes('<b>&amp; **bold**</b>'), 'markup in a title is shown as typed')
   // The longest name, shown as people write it; its page's header still fits.
-  await sidebar.getByRole('button', { name: /^Rainbow Six Siege/ }).click()
+  await selectGame(page, /^Rainbow Six Siege/)
   await page.waitForTimeout(200)
   await shot('game')
   await fits('long game name at 900')
 
   // Pick everything, delete it: the strip holds the count, then the notice with its Undo.
-  await choose(page, 'Library options', 'Select clips')
+  await choose(page, 'Library actions', 'Select clips')
   await page.keyboard.press('Control+a')
   await shot('select')
   await fits('selecting at 900')
@@ -1248,12 +1457,25 @@ async function worstScenario(browser) {
   await shot('undo')
   await fits('undo notice at 900')
   await page.getByRole('button', { name: 'Undo' }).click()
-  await sidebar.getByRole('button', { name: /^All clips/ }).click()
+  await libraryNav.getByRole('button', { name: /^All clips/ }).click()
+  await selectGame(page, 'All games')
 
   // A long title deleted alone: the notice names it, and Undo stays in reach.
   const long = page.locator('.clip-grid > *', { hasText: 'Aleksandra' })
+  await viewOption(page, 'Largest first')
+  await viewOption(page, 'Small thumbnails')
+  assert.ok(await long.locator('.card-details').evaluate((el) => el.scrollWidth <= el.clientWidth), 'small cards fit game, trim and marker metadata')
+  assert.ok(await long.evaluate((el) => el.querySelector('.card-caption').getBoundingClientRect().top >= el.querySelector('.media-tools').getBoundingClientRect().bottom), 'long metadata stays separate from actions over the image')
+  assert.ok(await long.locator('.card-caption').evaluate((el) => {
+    const title = el.querySelector('.card-title')
+    const star = el.querySelector('.favorite-mark').getBoundingClientRect()
+    const row = title.parentElement.getBoundingClientRect()
+    return title.getBoundingClientRect().right <= star.left && star.right <= row.right + 0.5
+  }), 'a long title leaves its favorite visible on the primary line')
+  await viewOption(page, 'Newest first')
+  await viewOption(page, 'Medium thumbnails')
   await long.hover()
-  await long.getByRole('button', { name: 'Delete' }).click()
+  await cardAction(page, long, 'Delete')
   await page.getByRole('button', { name: 'Undo' }).waitFor()
   await page.waitForTimeout(300)
   await shot('undo-long')
@@ -1276,6 +1498,7 @@ async function worstScenario(browser) {
   assert.ok(menu.x >= 0 && menu.y >= 0 && menu.x + menu.width <= 900 && menu.y + menu.height <= 600, 'the menu is inside the window')
   await page.keyboard.press('Escape')
   // Trimmed, with every shaping on: the row still holds the summary and both actions.
+  await startTrimming(page)
   await page.getByRole('slider', { name: 'Trim end' }).focus()
   await page.keyboard.press('ArrowLeft')
   await choose(page, 'Clip options', 'Vertical 9:16', 'menuitemcheckbox')
@@ -1283,6 +1506,16 @@ async function worstScenario(browser) {
   await page.waitForTimeout(200)
   await shot('studio-shaped')
   await fits('studio with a shaped selection at 900')
+  // Closely spaced moments remain independently clickable on the narrow
+  // timeline, including when the editing summary takes another row.
+  await page.locator('video').evaluate((video) => video.pause())
+  for (const [label, time] of [['0:00.00', 0], ['0:00.20', 0.2]]) {
+    await page.getByRole('button', { name: `Marked moment at ${label}`, exact: true }).click()
+    await page.waitForFunction((time) => Math.abs(document.querySelector('video').currentTime - time) < 0.03, time, { timeout: 3000 }).catch(async () => {
+      const state = await page.evaluate(() => ({ actual: document.querySelector('video').currentTime, seeking: document.querySelector('video').seeking, paused: document.querySelector('video').paused, indicated: document.querySelector('[aria-label="Seek"]').getAttribute('aria-valuenow') }))
+      assert.fail(`the nearby mark at ${label} did not seek: ${JSON.stringify(state)}`)
+    })
+  }
   // The clip with no sound, no picture and no length: no audio lane, no levels, no NaN.
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: /^Open/ }).first().click()
@@ -1313,11 +1546,12 @@ async function worstScenario(browser) {
   await page.waitForTimeout(300)
   await shot('library-1280')
   await fits('library at 1280')
-  // Open, the navigation cuts a long name short and says it whole under the pointer.
-  const longName = sidebar.getByRole('button', { name: /^Benachrichtigungseinstellungen-Simulator/ })
+  // Long game names remain complete in the collection's accessible label and tooltip.
+  const longName = gameChoice(page, /^Benachrichtigungseinstellungen-Simulator/)
   await longName.scrollIntoViewIfNeeded()
-  await longName.hover()
-  assert.ok((await page.getByRole('tooltip').innerText()).includes('Benachrichtigungseinstellungen-Simulator'), 'a name cut short is whole in its tooltip')
+  assert.ok((await longName.getAttribute('title')).includes('Benachrichtigungseinstellungen-Simulator'), 'a truncated game choice has its full title')
+  await longName.click()
+  assert.ok((await page.locator('main h1').getAttribute('title')).includes('Benachrichtigungseinstellungen-Simulator'), 'the selected game heading also retains its full title')
   await page.close()
 }
 
@@ -1348,6 +1582,20 @@ function shotFixtures() {
       })
       k++
     }
+    // Logged fixture sessions exercise the game's session headings and the
+    // daily game summaries, rather than only their no-session fallback.
+    const days = new Map()
+    for (const clip of clips.filter((c) => c.game === g.game)) {
+      const day = new Date(clip.created_ms).toDateString()
+      const saved = days.get(day) || []
+      saved.push(clip.created_ms)
+      days.set(day, saved)
+    }
+    entry.sessions = [...days.values()].map((times) => ({
+      game: g.game, steam_app_id: g.steam_app_id,
+      start_ms: Math.min(...times) - 20 * 60e3,
+      end_ms: Math.max(...times) + 10 * 60e3,
+    }))
   }
   games[0].playing = true
   return {
@@ -1391,11 +1639,16 @@ async function shotsScenario(browser) {
     const shot = (name) => page.screenshot({ path: path.join(out, `shots-${width}-${name}.png`) })
     const dialog = page.getByRole('dialog')
     await shot('library')
+    await page.locator('.media-card').first().hover()
+    await page.waitForTimeout(300)
+    await shot('library-hover')
+    await page.getByLabel('Search clips').hover()
+    await page.waitForTimeout(200)
 
     if (width === 1440) {
       // Navigation under the pointer, then under the keyboard.
       const nav = page.getByRole('navigation', { name: 'Library' })
-      await nav.getByRole('button', { name: 'Fortnite' }).hover()
+      await nav.getByRole('button', { name: 'Favorites' }).hover()
       await page.waitForTimeout(200)
       await shot('library-nav-hover')
       await page.mouse.move(800, 600)
@@ -1404,7 +1657,7 @@ async function shotsScenario(browser) {
       await page.waitForTimeout(200)
       await shot('library-nav-focus')
       // The library's other states: its menu, a card under the keyboard, nothing found.
-      await page.getByRole('button', { name: 'Library options' }).click()
+      await page.getByRole('button', { name: 'View options' }).click()
       await page.waitForTimeout(200)
       await shot('library-menu')
       await page.keyboard.press('Escape')
@@ -1416,15 +1669,25 @@ async function shotsScenario(browser) {
       await page.getByText('No clips match').waitFor()
       await shot('library-no-results')
       await page.getByLabel('Search clips').fill('')
-      await page.getByRole('button', { name: 'Collapse navigation' }).click()
-      await page.waitForTimeout(300)
-      await shot('library-collapsed')
-      await page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name: 'Deadlock' }).hover()
+      await gameChoice(page, 'Deadlock').hover()
       await page.waitForTimeout(200)
-      await shot('library-collapsed-hover')
-      await page.getByRole('button', { name: 'Expand navigation' }).click()
-      await page.waitForTimeout(300)
+      await shot('library-collection-hover')
     }
+
+    // Game identity and search share the compact header. Exercise artwork
+    // and a sparse collection without obscuring either the title or controls.
+    const library = page.getByRole('navigation', { name: 'Library' })
+    for (const name of ['Rainbow Six Siege', 'Deadlock', 'Dead by Daylight']) {
+      await selectGame(page, name)
+      await page.mouse.move(width - 20, height - 60)
+      await page.waitForTimeout(350)
+      assert.equal(await page.locator('main h1').innerText(), name, 'the scoped game remains clearly named')
+      assert.equal(await page.locator('.library-toolbar').evaluate((el) => el.scrollWidth - el.clientWidth), 0, 'the compact game header fits its controls')
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'game page fits the viewport')
+      await shot(`game-${name.toLowerCase().replaceAll(' ', '-')}`)
+    }
+    await library.getByRole('button', { name: 'All clips', exact: true }).click()
+    await selectGame(page, 'All games')
 
     // The viewer, on the clip the video file really is.
     await page.locator('.clip-open').first().click()
@@ -1434,6 +1697,7 @@ async function shotsScenario(browser) {
     await shot('viewer')
     if (width === 1440) {
       // A trim handle under the pointer, then held and dragged.
+      await startTrimming(page)
       const handle = await page.getByRole('slider', { name: 'Trim start' }).boundingBox()
       await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
       await page.waitForTimeout(250)
@@ -1461,8 +1725,8 @@ async function shotsScenario(browser) {
       await page.evaluate(() => {
         window.__renderGate = new Promise((go) => (window.__renderGo = go))
       })
-      await dialog.getByRole('button', { name: 'Save clip' }).click()
-      await dialog.getByText(/Saving clip/).waitFor()
+      await dialog.getByRole('button', { name: /^Save (?:trimmed|edited) copy$/ }).click()
+      await dialog.locator('.edit-status').getByText(/Saving clip/).waitFor()
       await page.evaluate(() => window[`_${window.__listeners['render-progress']}`]({ event: 'render-progress', id: 1, payload: { path: document.querySelector('video') ? window.__lastRender.path : '', fraction: 0.42 } }))
       await page.waitForTimeout(300)
       await shot('viewer-saving')
@@ -1471,12 +1735,12 @@ async function shotsScenario(browser) {
         window.__renderGo()
         window.__renderGate = null
       })
-      await dialog.getByText(/Couldn't save the clip/).waitFor()
+      await dialog.locator('.edit-status').getByText(/Couldn't save the clip/).waitFor()
       await page.waitForTimeout(300)
       await shot('viewer-failed')
       await page.evaluate(() => (window.__renderError = null))
       await dialog.getByRole('button', { name: 'Try again' }).click()
-      await dialog.getByText('Clip saved').waitFor()
+      await dialog.locator('.edit-status').getByText('Clip saved').waitFor()
       await page.waitForTimeout(300)
       await shot('viewer-saved')
     }

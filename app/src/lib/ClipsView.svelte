@@ -1,16 +1,18 @@
 <!--
-  The library: a header (what is listed and how many, search, one options
-  menu) and under it the clips the navigation chose, in dated sections,
+  The library: a compact identity and search, then the clips the navigation
+  chose. View options stay in a menu; clips are in dated sections,
   newest first, as many to a row as fit. Renders the header and the scroller
   into the page; it stays mounted behind an open clip, so coming back finds
   the same filters and the same scroll position.
 -->
 <script lang="ts">
-  import { Check, Search, SlidersHorizontal, X } from '@lucide/svelte'
+  import { Check, Ellipsis, Search, SlidersHorizontal, Trash2, X } from '@lucide/svelte'
   import { type Clip, type GameEntry, type Screenshot, type Settings, type Status } from './api'
+  import { bytes } from './format'
+  import { bySession } from './sessions'
   import ClipCard from './ClipCard.svelte'
   import FirstRun from './FirstRun.svelte'
-  import { date, dayKey, dayLabel, gameName, playedOnDay, playtime } from './format'
+  import { date, dayKey, dayLabel, gameName } from './format'
   import Popover from './Popover.svelte'
   import { prefs, setPrefs, type ThumbSize } from './prefs.svelte'
   import type { Scope } from './Rail.svelte'
@@ -26,11 +28,15 @@
     screenshots,
     scope,
     game,
+    games,
     behind,
     loading,
     hotkey,
     status,
     settings,
+    copyingPath = null,
+    copiedPath = null,
+    copyBlocked = false,
     onopen,
     onshot,
     ondelete,
@@ -46,14 +52,19 @@
     clips: Clip[]
     screenshots: Screenshot[]
     scope: Scope
-    /** The game listed when `scope` is 'game'. */
+    /** Optional game filter, shared by All clips and Favorites. */
     game: GameEntry | null
+    /** Every game available in the filter. */
+    games: GameEntry[]
     /** A clip or screenshot is open in the library's place: the keys are its. */
     behind: boolean
     loading: boolean
     hotkey: string
     status: Status | null
     settings: Settings | null
+    copyingPath?: string | null
+    copiedPath?: string | null
+    copyBlocked?: boolean
     /** `queue`: the clips as listed, for stepping to the next one. */
     onopen: (c: Clip, queue: string[]) => void
     onshot: (s: Screenshot) => void
@@ -80,12 +91,13 @@
   ]
   /** Narrowest a card gets before the grid drops a column: three to a row
    *  at 1280 to 1440 with the navigation open, at the middle size. */
-  const SIZES: { value: ThumbSize; label: string; min: number }[] = [
-    { value: 'large', label: 'Large', min: 440 },
-    { value: 'medium', label: 'Medium', min: 320 },
-    { value: 'small', label: 'Small', min: 230 },
+  const SIZES: { value: ThumbSize; label: string; min: number; max: number }[] = [
+    { value: 'small', label: 'Small', min: 230, max: 280 },
+    { value: 'medium', label: 'Medium', min: 280, max: 420 },
+    { value: 'large', label: 'Large', min: 440, max: 600 },
   ]
-  const minWidth = $derived(SIZES.find((s) => s.value === prefs.thumbSize)?.min ?? 320)
+  const minWidth = $derived(SIZES.find((s) => s.value === prefs.thumbSize)?.min ?? 300)
+  const maxWidth = $derived(SIZES.find((s) => s.value === prefs.thumbSize)?.max ?? 380)
 
   let query = $state('')
   let search: HTMLInputElement | undefined = $state()
@@ -99,7 +111,7 @@
   let anchor: string | null = null
 
   const scoped = $derived(
-    scope === 'game' ? clips.filter((c) => c.game === game?.name) : scope === 'starred' ? clips.filter((c) => c.favorite) : clips,
+    clips.filter((c) => (!game || c.game === game.name) && (scope !== 'starred' || c.favorite)),
   )
   const labels = $derived(
     prefs.tagging ? [...new Set(scoped.flatMap((c) => c.labels))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })) : [],
@@ -130,8 +142,12 @@
   // A game's screenshots sit among its clips by time, unless a filter or a
   // sort by something else has narrowed the list to clips.
   const byDay = $derived(sort === 'newest' || sort === 'oldest')
-  const shots = $derived(scope === 'game' ? screenshots.filter((s) => s.game === game?.name) : [])
+  const shots = $derived(game && scope !== 'starred' ? screenshots.filter((s) => s.game === game.name) : [])
+  /** A game's clips: by the play session they were saved in (the default),
+   *  or by day as everywhere else. */
+  let grouping = $state<'session' | 'day'>('day')
   type Item = { at: number } & ({ clip: Clip } | { shot: Screenshot })
+  type Section = { key: string; label: string; range?: string; played: number; live?: boolean; items: Item[] }
   const path = (it: Item) => ('clip' in it ? it.clip.path : it.shot.path)
   /** A local day with what was saved on it; one unnamed section when not sorted by time. */
   const sections = $derived.by(() => {
@@ -139,26 +155,28 @@
     if (!byDay) return items.length ? [{ key: 'all', label: '', played: 0, items }] : []
     if (!activeLabel && !query.trim()) items.push(...shots.map((shot) => ({ at: shot.modified_ms, shot })))
     items.sort((a, b) => (sort === 'oldest' ? a.at - b.at : b.at - a.at))
-    const days: { key: string; label: string; played: number; items: Item[] }[] = []
+    if (game && grouping === 'session') {
+      const groups = bySession(items, (it) => it.at, game)
+      if (sort === 'oldest') groups.reverse()
+      return groups as Section[]
+    }
+    const days: Section[] = []
     for (const it of items) {
       const key = dayKey(it.at)
       if (days.at(-1)?.key !== key) {
-        days.push({ key, label: dayLabel(it.at), played: game ? playedOnDay(game.sessions, it.at) : 0, items: [] })
+        days.push({ key, label: dayLabel(it.at), played: 0, items: [] })
       }
       days.at(-1)!.items.push(it)
     }
     return days
   })
 
-  /** What the header says is listed, and under what terms. */
+  const capsules = $derived(new Map(games.map((g) => [g.name, g.art.capsule])))
+
+  /** What the header says is listed, including screenshots when visible. */
   const listed = $derived(game ? gameName(game.name) : scope === 'starred' ? 'Favorites' : 'All clips')
-  const stats = $derived(
-    [
-      `${shown.length} clip${shown.length === 1 ? '' : 's'}`,
-      sort !== 'newest' && SORTS.find((s) => s.value === sort)?.label.toLowerCase(),
-      game?.total_play_ms ? `${playtime(game.total_play_ms)} played` : null,
-    ].filter((s): s is string => !!s),
-  )
+  const visibleShots = $derived(byDay && !activeLabel && !query.trim() ? shots.length : 0)
+  const count = $derived(`${shown.length} clip${shown.length === 1 ? '' : 's'}`)
 
   /** Pick or unpick a clip; `range`: everything from the last pick to it. */
   function toggle(c: Clip, range = false) {
@@ -191,8 +209,7 @@
     ondeletemany(cs)
   }
 
-  /** What the capture strip shows in place of the recorder while clips are
-   *  being picked; null otherwise. Read by the app, which owns the strip. */
+  /** The current selection, also available to the containing workspace. */
   export function selection(): Selection | null {
     if (!selecting) return null
     return {
@@ -268,22 +285,14 @@
   </button>
 {/snippet}
 
-<header class="page-header">
-  <div class="flex min-w-0 flex-1 items-baseline gap-3">
-    <h1 class="truncate font-display text-page font-semibold" title={listed}>{listed}</h1>
-    {#if scoped.length || shots.length}
-      <p class="flex-none text-secondary whitespace-nowrap text-fg-2 tabular-nums">{stats.join(' · ')}</p>
-      {#if activeLabel}
-        <button class="btn-text -ml-1 flex-none gap-1 self-center font-medium text-fg-2" onclick={() => (label = '')} aria-label="Stop filtering by tag {activeLabel}">
-          #{activeLabel}
-          <X size={13} />
-        </button>
-      {/if}
-    {/if}
+<header class="library-toolbar">
+  <div class="library-heading">
+    <h1 title={listed}>{listed}</h1>
+    <p class="library-count">{scope === 'starred' && game ? 'Favorites · ' : ''}{count}{visibleShots ? `, ${visibleShots} screenshots` : ''}</p>
   </div>
 
   {#if scoped.length || shots.length}
-    <label class="field flex w-64 flex-none items-center gap-2 max-lg:w-48" title="Search (Ctrl+F)">
+    <label class="search-field field flex items-center gap-2" title="Search (Ctrl+F)">
       <Search size={16} class="flex-none text-muted" />
       <input
         bind:this={search}
@@ -304,51 +313,96 @@
         </button>
       {/if}
     </label>
+    {#if activeLabel}
+      <button class="active-tag btn-text gap-1 text-fg-2" onclick={() => (label = '')} aria-label="Stop filtering by tag {activeLabel}" title="Stop filtering by tag {activeLabel}">
+        <span class="truncate">#{activeLabel}</span>
+        <X size={13} class="flex-none" />
+      </button>
+    {/if}
   {/if}
 
-  <Popover label="Library options">
+  <Popover label="View options">
     {#snippet trigger(props)}
-      <button {...props} class="btn-icon -mr-2" aria-label="Library options" title="Sort, thumbnail size and selection">
-        <SlidersHorizontal size={18} />
+      <button {...props} class="view-button press" aria-label="View options" title="View options">
+        <SlidersHorizontal size={16} /><span>View</span>
       </button>
     {/snippet}
-    <div class="pt-1.5 pr-2.5 pb-1 pl-9 text-caption text-muted">Sort</div>
-    {#each SORTS as s (s.value)}
-      {@render radio(sort === s.value, s.label, () => (sort = s.value))}
-    {/each}
-    <div class="menu-rule"></div>
-    <div class="pt-1.5 pr-2.5 pb-1 pl-9 text-caption text-muted">Thumbnails</div>
-    {#each SIZES as s (s.value)}
-      {@render radio(prefs.thumbSize === s.value, s.label, () => setPrefs({ thumbSize: s.value }))}
-    {/each}
-    {#if labels.length}
-      <div class="menu-rule"></div>
-      <div class="pt-1.5 pr-2.5 pb-1 pl-9 text-caption text-muted">Tag</div>
-      {@render radio(!activeLabel, 'Any tag', () => (label = ''))}
-      {#each labels as l (l)}
-        {@render radio(activeLabel === l, `#${l}`, () => (label = l))}
+    <div role="group" aria-label="Sort clips">
+      <div class="menu-label">Sort</div>
+      {#each SORTS as s (s.value)}
+        {@render radio(sort === s.value, s.label, () => (sort = s.value))}
       {/each}
-    {/if}
+    </div>
     <div class="menu-rule"></div>
-    <button class="menu-item" role="menuitem" disabled={!shown.length} onclick={() => (selecting ? stopSelecting() : (selecting = true))}>
-      <span class="w-4 flex-none"></span>{selecting ? 'Stop selecting' : 'Select clips'}
-      <span class="menu-key">Ctrl+click</span>
-    </button>
-    <button class="menu-item" role="menuitem" onclick={onpick}><span class="w-4 flex-none"></span>Open a video file…</button>
+    <div role="group" aria-label="Thumbnail size">
+      <div class="menu-label">Thumbnail size</div>
+      {#each SIZES as s (s.value)}
+        {@render radio(prefs.thumbSize === s.value, `${s.label} thumbnails`, () => setPrefs({ thumbSize: s.value }))}
+      {/each}
+    </div>
     {#if game}
       <div class="menu-rule"></div>
-      <button class="menu-item" role="menuitem" onclick={() => onnotgame(game)}><span class="w-4 flex-none"></span>{gameName(game.name)} is not a game</button>
+      <div role="group" aria-label="Group clips">
+        <div class="menu-label">Group</div>
+        {@render radio(grouping === 'session', 'By play session', () => (grouping = 'session'))}
+        {@render radio(grouping === 'day', 'By day', () => (grouping = 'day'))}
+      </div>
+    {/if}
+    {#if labels.length}
+      <div class="menu-rule"></div>
+      <div role="group" aria-label="Filter by tag">
+        <div class="menu-label">Tag</div>
+        {@render radio(!activeLabel, 'Any tag', () => (label = ''))}
+        {#each labels as l (l)}
+          {@render radio(activeLabel === l, `#${l}`, () => (label = l))}
+        {/each}
+      </div>
+    {/if}
+  </Popover>
+
+  <Popover label="Library actions">
+    {#snippet trigger(props)}
+      <button {...props} class="btn-icon" aria-label="Library actions" title="Library actions"><Ellipsis size={20} /></button>
+    {/snippet}
+    <button class="menu-item" role="menuitem" disabled={!shown.length} onclick={() => (selecting ? stopSelecting() : (selecting = true))}>
+      {selecting ? 'Stop selecting' : 'Select clips'}<span class="menu-key">Ctrl+click</span>
+    </button>
+    <button class="menu-item" role="menuitem" onclick={onpick}>Open a video file…</button>
+    {#if game}
+      <div class="menu-rule"></div>
+      <button class="menu-item" role="menuitem" onclick={() => onnotgame(game)}>{gameName(game.name)} is not a game</button>
     {/if}
   </Popover>
 </header>
 
-<div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-8 pt-1 pb-4">
+{#if selecting}
+  <div class="selection-toolbar" role="toolbar" aria-label="Selection actions">
+    <div class="selection-summary">
+      <span class="font-medium tabular-nums">{selectedClips.length} selected</span>
+      {#if selectedClips.length}<span class="text-muted tabular-nums">{bytes(selectedClips.reduce((sum, clip) => sum + clip.size_bytes, 0))}</span>{/if}
+    </div>
+    <button class="btn-sm" onclick={selectAll} disabled={!shown.length}>{shown.length > 0 && selectedClips.length === shown.length ? 'Select none' : 'Select all'}</button>
+    <button class="btn-danger" onclick={deleteSelected} disabled={!selectedClips.length}><Trash2 size={15} />Delete</button>
+    <button class="btn-sm" onclick={stopSelecting} title="Done selecting (Esc)">Done</button>
+  </div>
+{/if}
+
+<div class="library-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-8 pt-1 pb-4">
   {#if scoped.length || shots.length}
     {#if sections.length}
-      <VirtualGrid {sections} key={path} {minWidth}>
+      <VirtualGrid {sections} key={path} {minWidth} {maxWidth} head={48}>
         {#snippet heading(day)}
-          <h2 class="text-title font-semibold">{day.label}</h2>
-          {#if day.played}<span class="text-secondary text-fg-2">Played {playtime(day.played)}</span>{/if}
+          {#if day.range !== undefined}
+            <!-- A play session, from the recorder's log: when, and for how long. -->
+            <div class="session section-heading flex min-w-0 flex-1 items-baseline gap-3">
+              <h2 class="flex-none text-title font-semibold">{day.label}</h2>
+              {#if day.range}<span class="min-w-0 truncate text-secondary text-muted tabular-nums" title={day.range}>{day.range}</span>{/if}
+            </div>
+          {:else}
+            <div class="section-heading flex min-w-0 flex-1 items-baseline gap-3">
+              <h2 class="flex-none text-title font-semibold">{day.label}</h2>
+            </div>
+          {/if}
         {/snippet}
         {#snippet children(it)}
           {#if 'clip' in it}
@@ -356,9 +410,13 @@
             <ClipCard
               {clip}
               showGame={!game}
+              box={game ? null : capsules.get(clip.game)}
               dated={!byDay}
               selectable={selecting}
               selected={selected.has(clip.path)}
+              copying={copyingPath === clip.path}
+              copied={copiedPath === clip.path}
+              {copyBlocked}
               onopen={() => onopen(clip, shown.map((c) => c.path))}
               ondelete={() => ondelete(clip)}
               oncopy={() => oncopy(clip)}
@@ -368,7 +426,7 @@
             />
           {:else}
             {@const shot = it.shot}
-            <ScreenshotCard {shot} showGame={!game} onopen={() => onshot(shot)} ondelete={() => ondelete(shot)} oncopy={() => oncopy(shot)} onmenu={(x, y) => menuFor(it, x, y)} />
+            <ScreenshotCard {shot} {copyBlocked} showGame={!game} onopen={() => onshot(shot)} ondelete={() => ondelete(shot)} oncopy={() => oncopy(shot)} onmenu={(x, y) => menuFor(it, x, y)} />
           {/if}
         {/snippet}
       </VirtualGrid>
@@ -387,10 +445,10 @@
     {/if}
   {:else if loading}
     <div class="pt-3"><SkeletonGrid {minWidth} /></div>
+  {:else if scope === 'starred'}
+    <StateMessage title="No favorites{game ? ` from ${gameName(game.name)}` : ''} yet" body="Star a clip to keep it here." />
   {:else if game}
     <StateMessage title="No clips from {gameName(game.name)} yet" body="Press {hotkey} while playing to save the last {settings?.replay_seconds ?? 30} seconds." />
-  {:else if scope === 'starred'}
-    <StateMessage title="No favorites yet" body="Star a clip to keep it here." />
   {:else}
     <FirstRun {hotkey} {status} {settings} {onchoosescreen} {onsettings} />
   {/if}
@@ -401,7 +459,7 @@
   {#if target && 'clip' in target}
     {@const clip = target.clip}
     <button class="menu-item" role="menuitem" onclick={() => onopen(clip, shown.map((c) => c.path))}>Open</button>
-    <button class="menu-item" role="menuitem" onclick={() => oncopy(clip)}>Copy file</button>
+    <button class="menu-item" role="menuitem" disabled={copyBlocked} onclick={() => oncopy(clip)}>Copy clip</button>
     <button class="menu-item" role="menuitem" onclick={() => onfavorite(clip)}>{clip.favorite ? 'Remove from favorites' : 'Add to favorites'}</button>
     <button class="menu-item" role="menuitem" onclick={() => onreveal(clip)}>Show in folder</button>
     <button class="menu-item" role="menuitem" onclick={() => toggle(clip)}>{selected.has(clip.path) ? 'Deselect' : 'Select'}</button>
@@ -410,9 +468,33 @@
   {:else if target}
     {@const shot = target.shot}
     <button class="menu-item" role="menuitem" onclick={() => onshot(shot)}>Open</button>
-    <button class="menu-item" role="menuitem" onclick={() => oncopy(shot)}>Copy file</button>
+    <button class="menu-item" role="menuitem" disabled={copyBlocked} onclick={() => oncopy(shot)}>Copy screenshot</button>
     <button class="menu-item" role="menuitem" onclick={() => onreveal(shot)}>Show in folder</button>
     <div class="menu-rule"></div>
     <button class="menu-item text-danger" role="menuitem" onclick={() => ondelete(shot)}>Delete</button>
   {/if}
 </Popover>
+
+<style>
+  .library-toolbar { position: relative; display: flex; flex: none; align-items: center; gap: 12px; min-height: 88px; padding: 0 32px; }
+  .library-heading { min-width: 0; flex: 1; padding-right: 16px; }
+  .library-heading h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -.5px; }
+  .library-count { margin-top: 2px; color: var(--color-muted); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
+  .search-field { width: 204px; min-width: 136px; flex: 0 1 204px; background: transparent; border-color: var(--color-line); }
+  .view-button { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 7px; height: 36px; padding: 0 8px; border-radius: 2px; color: var(--color-fg-2); font-size: 13px; white-space: nowrap; }
+  .view-button:hover, .view-button[aria-expanded='true'] { background: var(--color-chrome); color: var(--color-fg); }
+  .menu-label { padding: 6px 10px 4px 36px; color: var(--color-muted); font-size: 12px; line-height: 18px; }
+  .active-tag { min-width: 0; max-width: 100px; }
+  .library-scroll { position: relative; scrollbar-gutter: stable; }
+  .section-heading { max-width: 100%; }
+  .section-heading :global(h2) { font-size: 13px; line-height: 20px; font-weight: 500; color: var(--color-fg-2); }
+  .selection-toolbar { display: flex; flex: none; align-items: center; gap: 12px; min-height: 44px; padding: 6px 32px; background: var(--color-chrome); font-size: 13px; }
+  .selection-summary { display: flex; min-width: 0; flex: 1; align-items: center; gap: 12px; }
+  @media (max-width: 1100px) {
+    .library-toolbar, .library-scroll, .selection-toolbar { padding-inline: 24px; }
+    .library-toolbar { gap: 8px; }
+    .search-field { width: 164px; flex-basis: 164px; }
+    .active-tag { max-width: 68px; }
+  }
+  @media (max-height: 650px) { .library-toolbar { min-height: 76px; } }
+</style>

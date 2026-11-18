@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reruns: two directions, one recommendation</title>
+<style>
+  :root {
+    --canvas: #151719; --chrome: #1c1f22; --raised: #25292d; --line: #2a2e32; --line-strong: #3d4349;
+    --fg: #f2f1ed; --fg-2: #a9afb6; --muted: #8d939b; --accent: #ff985e; --ok: #4cc77a;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--canvas); color: var(--fg); font: 15px/1.55 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; }
+  ::selection { background: color-mix(in oklab, var(--accent) 38%, var(--canvas)); }
+  a { color: var(--fg); text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+  a:hover { text-decoration-color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  main { max-width: 1480px; margin: 0 auto; padding: 48px 40px 96px; }
+  h1 { font: 600 32px/40px 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; margin: 0 0 8px; letter-spacing: -0.01em; }
+  h2 { font: 600 22px/30px 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; margin: 64px 0 12px; }
+  h3 { font-size: 16px; line-height: 22px; font-weight: 600; margin: 32px 0 8px; }
+  p, li { max-width: 74ch; color: var(--fg-2); }
+  strong { color: var(--fg); font-weight: 600; }
+  .lede { font-size: 17px; color: var(--fg-2); max-width: 78ch; }
+  .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 12px 0 4px; }
+  .row.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  figure { margin: 0; }
+  figure img { display: block; width: 100%; height: auto; border-radius: 6px; box-shadow: 0 0 0 1px var(--line-strong); background: var(--chrome); }
+  figcaption { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  figcaption b { color: var(--fg); font-weight: 600; }
+  .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; font-size: 13px; color: var(--muted); margin-top: 20px; }
+  .cols b { color: var(--fg); font-size: 15px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 12px; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; position: sticky; top: 0; background: var(--canvas); }
+  td { color: var(--fg-2); }
+  td:first-child { color: var(--fg); font-weight: 600; width: 13%; }
+  td.verdict { color: var(--fg); font-weight: 600; white-space: nowrap; }
+  .now { color: var(--accent); }
+  .tag { display: inline-block; margin-right: 8px; color: var(--fg); font-weight: 600; }
+  ol li, ul li { margin: 6px 0; }
+  .note { border-left: 1px solid var(--line-strong); padding-left: 14px; }
+  code { font: 13px/1 ui-monospace, 'Cascadia Mono', Consolas, monospace; color: var(--fg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reruns: two directions, one recommendation</h1>
+  <p class="lede">The current app, Direction A ("tinted desk") and Direction B ("sessions"), built as swaps of the real Svelte components and rendered from one library whose cards, Steam art and footage agree. Same clips, same window sizes. Time is fixed at Saturday 14 November, 8:30 PM. Click any picture for full size.</p>
+
+  <div class="cols">
+    <div><b>Current</b><br />The app as committed on <code>redesign</code> (954afda).</div>
+    <div><b>A, tinted desk</b><br />Same layout, refined: warm umber surfaces, recessed navigation, box art at its own 2:3 shape, a tinted game header, a raised Play key, moments in their own timeline lane.</div>
+    <div><b>B, sessions</b><br />The library reads as evenings of play: a game band from the game's own art, clips grouped by logged play session, the day's games on All clips, one diamond for a saved moment everywhere, Set as cover while paused, the session's other clips under the viewer.</div>
+  </div>
+
+  <h2>Recommendation: B</h2>
+  <p>B is the one that could only be Reruns. A is better-made than the current app, but put side by side it is the same app in a warmer light. B changes what the library is <em>about</em>, using only facts Reruns already records. These are the decisions that do it:</p>
+  <ol>
+    <li><strong>The diamond is the saved moment.</strong> ◆ where you pressed F7, ◇ where F8 saved the clip. It appears under the card's picture, in its own lane on the timeline (never on top of a frame, where the old white flags looked like the playhead), and as "2 marked" in the transport. Video editors already read a diamond as "a point in time worth keeping".</li>
+    <li><strong>Sessions, not files.</strong> A game page groups clips by the play sessions the recorder logs ("Yesterday 9:05 – 11:20 PM, 2h 15m played"). All clips stays chronological by day but says what you played that day. Nothing is invented: a clip outside a logged session falls back to its day. Grouping by day remains in the page's menu.</li>
+    <li><strong>Game colour, bounded.</strong> The game's own key art and logo, in a 156 px band (120 px in short windows, 108 px with no Steam art), tinted from that art. The tint also marks the selected game row and the session hairlines, and nothing else: the navigation, controls and orange stay the app's own. The page keeps a full row of clips in view at 900 × 600.</li>
+    <li><strong>Art composed, not cropped.</strong> Steam's 2:3 box art at its own shape in the navigation, the viewer header and next to a card's game, instead of a square cut from the top of a portrait.</li>
+    <li><strong>You never lose your place.</strong> The card's picture flies into the player and back to the card of the clip you ended on (even after ← →), which rings once. In the viewer, the rest of that session's clips sit in the spare room under the controls, one click each, only when the player keeps its full size.</li>
+  </ol>
+  <p>Worth taking from A into B: the raised Play key and the top light on Copy clip. Not A's warm surfaces: in B the chrome stays neutral so the game's colour is the only one that changes.</p>
+  <p class="note">This brief asks for things the last design brief banned. B's band fades the art into its tint with a <code>mask-image</code> gradient, and game colour now reaches the chrome (DESIGN.md and <code>accents.ts</code> said it never would). If the fade reads as the gradient you rejected before, the fallback is a hard-edged, framed art panel; the rest of B doesn't depend on it.</p>
+
+  <h2>All clips</h2>
+  <div class="row">
+    <figure><a href="shots/base-1440-library.png"><img src="shots/base-1440-library.png" alt="Current: All clips at 1440 by 900" loading="lazy" /></a><figcaption><b>Current</b> 1440 × 900</figcaption></figure>
+    <figure><a href="shots/a-1440-library.png"><img src="shots/a-1440-library.png" alt="A: All clips at 1440 by 900" loading="lazy" /></a><figcaption><b>A</b> warm surfaces, spines, medium-weight card titles</figcaption></figure>
+    <figure><a href="shots/b-1440-library.png"><img src="shots/b-1440-library.png" alt="B: All clips at 1440 by 900" loading="lazy" /></a><figcaption><b>B</b> the day's games in its heading; box art beside a card's game; ◆ under clips with marks</figcaption></figure>
+  </div>
+
+  <h2>A game's page</h2>
+  <div class="row">
+    <figure><a href="shots/base-1440-game-art.png"><img src="shots/base-1440-game-art.png" alt="Current: Rainbow Six Siege page" loading="lazy" /></a><figcaption><b>Current</b> Rainbow Six Siege, being captured</figcaption></figure>
+    <figure><a href="shots/a-1440-game-art.png"><img src="shots/a-1440-game-art.png" alt="A: Rainbow Six Siege page" loading="lazy" /></a><figcaption><b>A</b> header tinted from the box art, which it holds</figcaption></figure>
+    <figure><a href="shots/b-1440-game-art.png"><img src="shots/b-1440-game-art.png" alt="B: Rainbow Six Siege page" loading="lazy" /></a><figcaption><b>B</b> key art and logo; the live session, from 6:05 PM</figcaption></figure>
+  </div>
+  <div class="row">
+    <figure><a href="shots/base-1440-game-noart.png"><img src="shots/base-1440-game-noart.png" alt="Current: Fortnite page" loading="lazy" /></a><figcaption><b>Current</b> Fortnite: no Steam art</figcaption></figure>
+    <figure><a href="shots/a-1440-game-noart.png"><img src="shots/a-1440-game-noart.png" alt="A: Fortnite page" loading="lazy" /></a><figcaption><b>A</b> the newest clip's frame stands in for box art</figcaption></figure>
+    <figure><a href="shots/b-1440-game-noart.png"><img src="shots/b-1440-game-noart.png" alt="B: Fortnite page" loading="lazy" /></a><figcaption><b>B</b> shorter band; two sessions with their times</figcaption></figure>
+  </div>
+
+  <h2>The viewer</h2>
+  <div class="row">
+    <figure><a href="shots/base-1440-viewer.png"><img src="shots/base-1440-viewer.png" alt="Current viewer, ultrawide clip" loading="lazy" /></a><figcaption><b>Current</b> ultrawide; marks are white flags like the playhead</figcaption></figure>
+    <figure><a href="shots/a-1440-viewer.png"><img src="shots/a-1440-viewer.png" alt="A viewer, ultrawide clip" loading="lazy" /></a><figcaption><b>A</b> marks in their own lane; raised Play key</figcaption></figure>
+    <figure><a href="shots/b-1440-viewer.png"><img src="shots/b-1440-viewer.png" alt="B viewer, ultrawide clip" loading="lazy" /></a><figcaption><b>B</b> box art in the header; ◆ marks, ◇ saved; Set as cover; the session's clips</figcaption></figure>
+  </div>
+  <div class="row">
+    <figure><a href="shots/base-1440-viewer-169.png"><img src="shots/base-1440-viewer-169.png" alt="Current viewer, 16:9 clip" loading="lazy" /></a><figcaption><b>Current</b> 16:9 footage</figcaption></figure>
+    <figure><a href="shots/a-1440-viewer-169.png"><img src="shots/a-1440-viewer-169.png" alt="A viewer, 16:9 clip" loading="lazy" /></a><figcaption><b>A</b> 16:9</figcaption></figure>
+    <figure><a href="shots/b-1440-viewer-169.png"><img src="shots/b-1440-viewer-169.png" alt="B viewer, 16:9 clip" loading="lazy" /></a><figcaption><b>B</b> 16:9; the player is the same size in all three</figcaption></figure>
+  </div>
+
+  <h3>Trim, copy and cover, in B</h3>
+  <div class="row">
+    <figure><a href="shots/b-1440-viewer-trim.png"><img src="shots/b-1440-viewer-trim.png" alt="B: trimmed, start handle under the pointer" loading="lazy" /></a><figcaption>Trimmed; the start handle under the pointer says its time</figcaption></figure>
+    <figure><a href="shots/b-1440-viewer-copying.png"><img src="shots/b-1440-viewer-copying.png" alt="B: preparing the clip, 58 percent" loading="lazy" /></a><figcaption>Copy clip rendering to fit 10 MB, with Cancel</figcaption></figure>
+    <figure><a href="shots/b-1440-viewer-copied.png"><img src="shots/b-1440-viewer-copied.png" alt="B: copied" loading="lazy" /></a><figcaption>Copied, in the button's own place</figcaption></figure>
+  </div>
+  <div class="row">
+    <figure><a href="shots/b-1440-viewer-cover.png"><img src="shots/b-1440-viewer-cover.png" alt="B: cover set" loading="lazy" /></a><figcaption>Set as cover: says Cover set in place, with Undo; the session strip updates</figcaption></figure>
+    <figure><a href="shots/b-1440-return-landed.png"><img src="shots/b-1440-return-landed.png" alt="B: back in the library, the clip ringed" loading="lazy" /></a><figcaption>Esc after stepping to the next clip: that card rings once</figcaption></figure>
+    <figure><a href="shots/b-1440-viewer-menu.png"><img src="shots/b-1440-viewer-menu.png" alt="B: clip options menu" loading="lazy" /></a><figcaption>Use this frame as cover is also in the menu, on T</figcaption></figure>
+  </div>
+  <div class="row">
+    <figure><a href="shots/a-1440-viewer-trim.png"><img src="shots/a-1440-viewer-trim.png" alt="A: trimmed" loading="lazy" /></a><figcaption><b>A</b> trimmed</figcaption></figure>
+    <figure><a href="shots/a-1440-viewer-copied.png"><img src="shots/a-1440-viewer-copied.png" alt="A: copied" loading="lazy" /></a><figcaption><b>A</b> copied</figcaption></figure>
+    <figure><a href="shots/a-1440-viewer-cover.png"><img src="shots/a-1440-viewer-cover.png" alt="A: cover set from the menu" loading="lazy" /></a><figcaption><b>A</b> cover from the menu: "Cover set to 0:07", Undo</figcaption></figure>
+  </div>
+
+  <h2>Motion, from recorded frames</h2>
+  <p>Frames from the browser's own screencast of a real click, ← and Esc (<code>motion.cjs</code>), about 30 ms apart, the first 420 ms of each. Top: opening. Bottom: back to the library.</p>
+  <div class="row two">
+    <figure><a href="shots/motion-b-open.jpg"><img src="shots/motion-b-open.jpg" alt="B opening a clip, frame by frame" loading="lazy" /></a><figcaption><b>Open</b> the card's picture is in place on the first frame and grows into the player (240 ms); a cut to the video once it has a frame</figcaption></figure>
+    <figure><a href="shots/motion-b-back.jpg"><img src="shots/motion-b-back.jpg" alt="B returning to the library, frame by frame" loading="lazy" /></a><figcaption><b>Back</b> the library is there at once; the picture shrinks to the card of the clip you were on (220 ms) and rings it</figcaption></figure>
+  </div>
+  <div class="row two">
+    <figure><a href="shots/motion-base-open.jpg"><img src="shots/motion-base-open.jpg" alt="Current app opening a clip" loading="lazy" /></a><figcaption><b>Current</b> open: a fade</figcaption></figure>
+    <figure><a href="shots/motion-base-back.jpg"><img src="shots/motion-base-back.jpg" alt="Current app returning" loading="lazy" /></a><figcaption><b>Current</b> back: a cut; focus goes to the card first opened, not the one you stepped to</figcaption></figure>
+  </div>
+  <p>The first recording caught two faults, now fixed: an empty canvas for ~70 ms before the picture moved, and a double exposure where the 16:9 thumbnail cross-faded over the wider video. The remaining jump at landing in these frames comes from the test thumbnail, which is a 16:9 crop of ultrawide footage; the app's own thumbnails keep the clip's shape (<code>media.rs</code>, 320 px wide), so in the app the picture lands matching.</p>
+
+  <h2>Window sizes</h2>
+  <h3>900 × 600, the smallest window</h3>
+  <div class="row">
+    <figure><a href="shots/base-900-game-art.png"><img src="shots/base-900-game-art.png" alt="Current, game page at 900 by 600" loading="lazy" /></a><figcaption><b>Current</b></figcaption></figure>
+    <figure><a href="shots/a-900-game-art.png"><img src="shots/a-900-game-art.png" alt="A, game page at 900 by 600" loading="lazy" /></a><figcaption><b>A</b></figcaption></figure>
+    <figure><a href="shots/b-900-game-art.png"><img src="shots/b-900-game-art.png" alt="B, game page at 900 by 600" loading="lazy" /></a><figcaption><b>B</b> the band drops to 120 px; a row of clips stays in view</figcaption></figure>
+  </div>
+  <div class="row">
+    <figure><a href="shots/base-900-viewer.png"><img src="shots/base-900-viewer.png" alt="Current viewer at 900 by 600" loading="lazy" /></a><figcaption><b>Current</b> viewer</figcaption></figure>
+    <figure><a href="shots/a-900-viewer.png"><img src="shots/a-900-viewer.png" alt="A viewer at 900 by 600" loading="lazy" /></a><figcaption><b>A</b> the moments lane costs 12 px of height here, so the picture is ~29 px narrower</figcaption></figure>
+    <figure><a href="shots/b-900-viewer.png"><img src="shots/b-900-viewer.png" alt="B viewer at 900 by 600" loading="lazy" /></a><figcaption><b>B</b> same; no session strip (no room)</figcaption></figure>
+  </div>
+  <h3>1280 × 800</h3>
+  <div class="row">
+    <figure><a href="shots/base-1280-library.png"><img src="shots/base-1280-library.png" alt="Current at 1280 by 800" loading="lazy" /></a><figcaption><b>Current</b></figcaption></figure>
+    <figure><a href="shots/a-1280-library.png"><img src="shots/a-1280-library.png" alt="A at 1280 by 800" loading="lazy" /></a><figcaption><b>A</b></figcaption></figure>
+    <figure><a href="shots/b-1280-library.png"><img src="shots/b-1280-library.png" alt="B at 1280 by 800" loading="lazy" /></a><figcaption><b>B</b></figcaption></figure>
+  </div>
+  <h3>1920 × 1040, maximized</h3>
+  <div class="row">
+    <figure><a href="shots/base-1920-game-art.png"><img src="shots/base-1920-game-art.png" alt="Current, game page maximized" loading="lazy" /></a><figcaption><b>Current</b></figcaption></figure>
+    <figure><a href="shots/a-1920-game-art.png"><img src="shots/a-1920-game-art.png" alt="A, game page maximized" loading="lazy" /></a><figcaption><b>A</b></figcaption></figure>
+    <figure><a href="shots/b-1920-game-art.png"><img src="shots/b-1920-game-art.png" alt="B, game page maximized" loading="lazy" /></a><figcaption><b>B</b> the art is capped at 900 px wide</figcaption></figure>
+  </div>
+  <div class="row">
+    <figure><a href="shots/base-1920-viewer.png"><img src="shots/base-1920-viewer.png" alt="Current viewer maximized" loading="lazy" /></a><figcaption><b>Current</b> the workspace stays 1080 px</figcaption></figure>
+    <figure><a href="shots/a-1920-viewer.png"><img src="shots/a-1920-viewer.png" alt="A viewer maximized" loading="lazy" /></a><figcaption><b>A</b></figcaption></figure>
+    <figure><a href="shots/b-1920-viewer.png"><img src="shots/b-1920-viewer.png" alt="B viewer maximized" loading="lazy" /></a><figcaption><b>B</b></figcaption></figure>
+  </div>
+
+  <h3>States and worst cases</h3>
+  <div class="row">
+    <figure><a href="shots/b-1440-library-select.png"><img src="shots/b-1440-library-select.png" alt="B: two clips picked" loading="lazy" /></a><figcaption>Picking: a box on the picture's corner (both directions)</figcaption></figure>
+    <figure><a href="shots/b-1440-library-focus.png"><img src="shots/b-1440-library-focus.png" alt="B: keyboard focus on a card" loading="lazy" /></a><figcaption>Keyboard focus on a card</figcaption></figure>
+    <figure><a href="shots/b-1440-art-loading.png"><img src="shots/b-1440-art-loading.png" alt="B: Steam art still loading" loading="lazy" /></a><figcaption>Steam art held back: the name stands in for the logo, initials for the spines</figcaption></figure>
+  </div>
+  <div class="row">
+    <figure><a href="shots/b-900-stress-library.png"><img src="shots/b-900-stress-library.png" alt="B: long names at 900 by 600" loading="lazy" /></a><figcaption><b>B</b> long titles and a long game name at 900 × 600</figcaption></figure>
+    <figure><a href="shots/b-1440-stress-viewer.png"><img src="shots/b-1440-stress-viewer.png" alt="B: long title in the viewer" loading="lazy" /></a><figcaption><b>B</b> a 100-character title in the viewer</figcaption></figure>
+    <figure><a href="shots/a-1440-stress-library.png"><img src="shots/a-1440-stress-library.png" alt="A: long names" loading="lazy" /></a><figcaption><b>A</b> long names</figcaption></figure>
+  </div>
+
+  <h2>Feature assessment</h2>
+  <p>Audited against the code on <code>redesign</code>, not the docs.</p>
+  <table>
+    <thead><tr><th>Feature</th><th>What exists</th><th>The problem</th><th>Smallest useful version</th><th>Windows / Linux</th><th>Cost and risk</th><th>Parity or a reason to switch</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1. Copy clip applies trim, mix, sharing</td>
+        <td><strong>Done in the viewer.</strong> Copy clip sends the file as it is when nothing changed and it's under the Sharing limit (10 MB, on by default); otherwise renders the trim, track levels, 9:16 and slow motion to fit, copies that, keeps it as an edit. Progress, Cancel, Try again, "Copied". <strong>Gap:</strong> the Copy button on a library card copies the raw file whatever its size.</td>
+        <td>Copy from the grid, paste into Discord: a 60 MB clip fails to upload.</td>
+        <td>The card's Copy follows the viewer's rule (fit when over the limit), progress in the capture strip.</td>
+        <td>Same render path. Clipboard: CF_HDROP vs <code>text/uri-list</code> (arboard); pasting a file into Discord on Linux not verified.</td>
+        <td>Small, frontend. A render takes seconds and uses the encoder; refuse while one runs.</td>
+        <td>Parity for the action; "fits Discord by default" is a quiet reason.</td>
+        <td class="verdict now">This release</td>
+      </tr>
+      <tr>
+        <td>2. Longer replay history</td>
+        <td>RAM ring, 15 s to 5 min in Settings (backend clamps 5–600 s), size shown before choosing. Roadmap: up to 20 min spilling to disk.</td>
+        <td>"It happened six minutes ago." Clipping a whole round.</td>
+        <td>Segments on disk past a RAM budget (last ~30 s in RAM), saving by remuxing segments, no re-encode; "Save last 5 / 15 min" in the strip's menu.</td>
+        <td>Same GStreamer code. Windows Defender scanning a churning temp folder is a likely I/O cost (untested).</td>
+        <td>Medium-large and in the capture path (principle 1). ~9 GB/hour of writes at 20 Mb/s; cleanup after crashes; SSD wear questions.</td>
+        <td>Parity: Steam keeps hours, ShadowPlay 20 min.</td>
+        <td class="verdict">Next release</td>
+      </tr>
+      <tr>
+        <td>3. Footage after the press</td>
+        <td>Before only: the clip ends where F8 was pressed. F7 marks exist and survive edits.</td>
+        <td>Pressing late or early cuts off the reaction, the kill cam, the end of the play.</td>
+        <td>"Keep recording after the press: off / 5 / 10 s". The save waits, then snapshots; the press time goes in the sidecar (<code>saved_at</code>) and shows as B's ◇. The default cover can come from just before it.</td>
+        <td>Identical (ring and a timer). The popup over the game is Windows-only; it would say Saving… then Clip saved.</td>
+        <td>Small. The ring holds replay + after; a game that closes mid-wait saves what there is; the sound plays at the press.</td>
+        <td>Parity with Medal and Outplayed; it makes the saved moment meaningful in the viewer.</td>
+        <td class="verdict now">This release</td>
+      </tr>
+      <tr>
+        <td>4. Sessions and cover frames</td>
+        <td>Sessions logged per game (<code>sessions.jsonl</code>; newest 50 reach the UI), used only for "Played 2h" and totals. Thumbnail is the frame at 1 s: often a menu or loading screen. 10-frame hover sprites exist.</td>
+        <td>Finding "that evening"; rows of cards that all show the same menu.</td>
+        <td>Group a game's page by session (frontend only, as in B). Set as cover: sidecar <code>cover</code> seconds, the thumbnailer grabs that frame with an accurate seek.</td>
+        <td>Identical.</td>
+        <td>Small. Regenerating one thumbnail ~0.1 s; invalidate by the sidecar. Past 50 sessions, clips group by day.</td>
+        <td>A reason: Steam has a per-game timeline, nobody groups by session.</td>
+        <td class="verdict now">This release</td>
+      </tr>
+      <tr>
+        <td>5. Separate voice chat, cleanup</td>
+        <td>Desktop output and mic as their own tracks, plus a mixed first track; per-track levels in Audio mix. Voice chat is inside the desktop track. No noise suppression.</td>
+        <td>Friends' voices or music in a clip meant for posting; mic noise.</td>
+        <td>Mic cleanup at render (a noise-suppression toggle in Audio mix). Per-app capture is the big version.</td>
+        <td>Per-app differs completely: Windows process loopback vs PipeWire node targeting. Cleanup at render is the same on both.</td>
+        <td>Per-app: medium-large, two code paths, more tracks in RAM. Cleanup: small.</td>
+        <td>Parity with Medal and OBS. You set aside game-only audio for your own setup (Sonar's mix).</td>
+        <td class="verdict">Not now</td>
+      </tr>
+      <tr>
+        <td>6. Automatic highlights</td>
+        <td>None; manual F7 marks. The roadmap puts event detection last.</td>
+        <td>Forgetting the hotkey in a long session.</td>
+        <td>One game with an official local feed: CS2's Game State Integration posts round and kill events to localhost; events become marks.</td>
+        <td>CS2 GSI works on native Linux CS2 too. League's local API is Windows-only. Overwatch and Fortnite have no local feed (others use Overwolf or vision).</td>
+        <td>Per-game upkeep; GSI needs a file written into the game's cfg folder (a trust question); auto-saves need storage caps.</td>
+        <td>Medal and Outplayed lead with this; partial parity at best.</td>
+        <td class="verdict">A spike later</td>
+      </tr>
+      <tr>
+        <td>7. Share links, phone transfer</td>
+        <td>None. The media server listens on 127.0.0.1 with a random token. Planned: a Wi-Fi companion first, your own server later.</td>
+        <td>Sending to someone not on Discord; watching or posting from the phone.</td>
+        <td>"Send to phone": a QR code in the viewer for a one-file, one-time LAN link to the rendered selection. Links that leave the house need hosting.</td>
+        <td>Listening on the LAN raises Windows Firewall's prompt; Linux firewalls may block silently.</td>
+        <td>Security (token, one file, no TLS on shared Wi-Fi), support. Hosting: ongoing cost, abuse, and the "no account" question.</td>
+        <td>Medal's core reason people use it. LAN transfer alone is niche.</td>
+        <td class="verdict">With the mobile work</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Recommended release: "the saved moment"</h3>
+  <ol>
+    <li><strong>Time after the press</strong> (off / 5 / 10 s) with the press recorded in the sidecar, shown as ◇ on the timeline.</li>
+    <li><strong>Set as cover</strong>, in the sidecar, on T and while paused.</li>
+    <li><strong>A game's page by play session</strong>, with the compact game band; day grouping stays in its menu.</li>
+    <li><strong>Copy from a card follows the Sharing limit</strong>, so copy-then-paste into Discord always works.</li>
+    <li><strong>Direction B's visuals</strong> around those, plus A's Play key.</li>
+  </ol>
+  <p>Each is small, none touches the capture path except the wait after the press, and together they make the release about one thing: the moment you saved. The longer, disk-backed replay is the next release (parity with Steam, but in the capture path). Not on the default player: audio cleanup, highlights, phone transfer.</p>
+
+  <h2>Real, prototype, untested</h2>
+  <h3>Real: the app does this today</h3>
+  <ul>
+    <li>Replay clips, F7 marks in sidecars (carried into edits), Steam capsule, hero and logo art from Steam's cache, thumbnails that keep the clip's shape.</li>
+    <li>Play sessions logged per game with start and end; 50 newest per game in the library listing.</li>
+    <li>Copy clip in the viewer rendering trim, mix, 9:16 and slow motion to fit the Sharing size, with progress, Cancel, Copied, Try again.</li>
+  </ul>
+  <h3>Prototype: runs in the pictures, not built for real</h3>
+  <ul>
+    <li><strong>Cover frame</strong>: drawn from the playing video into memory, gone on reload. Real: sidecar + thumbnailer.</li>
+    <li><strong>Art tint</strong>: read from the image in the page, which needs CORS. The driver serves it; Tauri's asset protocol may not, and then it falls back to the hand-picked colour. Real: compute in Rust at listing.</li>
+    <li><strong>Data plumbing</strong>: games and clips reach the library and viewer through a module store written by the navigation, so <code>App.svelte</code> is untouched; the viewer opens a session's clip through the library. Real: props from App.</li>
+    <li><strong>◇ Saved here</strong> sits at the clip's end, true for an untrimmed replay today; it only earns its place with time after the press.</li>
+    <li><strong>Session times in the pictures</strong> are fixture data shaped like <code>sessions.jsonl</code>; clips, art and footage are real.</li>
+    <li>Open/return continuity, the session strip, the band, the diamonds: built and exercised in Edge (the WebView2 engine), not in the app window.</li>
+  </ul>
+  <h3>Untested</h3>
+  <ul>
+    <li><strong>Linux (WebKitGTK)</strong>: none of this has run there. Watch <code>mask-image</code> on the band, <code>OffscreenCanvas</code> for the tint, the flight's smoothness, <code>color-mix()</code> and <code>oklch()</code> on older WebKitGTK.</li>
+    <li>Inside Tauri at all: tint extraction, <code>crossorigin</code> on the player video (the media server allows it for the waveform), drag-out from cards with the new markup.</li>
+    <li>Logos whose own colours sit badly on their tint; very bright key art behind the search field.</li>
+    <li>Libraries over 120 clips: the grid then renders only nearby rows, so after stepping far with ← → the return finds no card to land on and just doesn't fly.</li>
+    <li>The flying picture is the 320 px thumbnail scaled up to the player for ~240 ms; soft, on screen briefly. Judged acceptable in frames, not on a real display.</li>
+    <li>Whether pasting HEVC or AV1 files copied as they are embeds in Discord (Copy sends the original codec when nothing changed).</li>
+  </ul>
+  <p>The only finding of the skill's design detector was the 3 px accent tab on the current navigation row, which DESIGN.md specifies and both directions inherit unchanged.</p>
+</main>
+</body>
+</html>

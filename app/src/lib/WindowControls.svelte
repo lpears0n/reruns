@@ -1,8 +1,9 @@
 <!--
   The window's own strip, for a window without the system frame (Windows):
   32 px across the top that drags the window (double-click maximizes) and
-  ends in minimize / maximize / close. It holds nothing of the app's, so
-  window chrome and content never share a bar. Renders nothing when the
+  ends in minimize / maximize / close. The current layout keeps app content
+  separate; this is not a requirement for future shell designs. Any shared
+  bar must preserve native window interactions. Renders nothing when the
   window keeps its own decorations (Linux), so the frame is never doubled.
   Close goes through the normal close request: hide to tray or quit, as set.
 -->
@@ -39,7 +40,7 @@
 </script>
 
 {#if !framed}
-  <div class="flex h-chrome flex-none bg-chrome" data-tauri-drag-region>
+  <div class="flex h-chrome flex-none bg-nav" data-tauri-drag-region>
   <div class="flex-1" data-tauri-drag-region></div>
   <div class="flex flex-none" role="group" aria-label="Window">
     <button class="caption" onclick={() => win.minimize()} aria-label="Minimize" title="Minimize">

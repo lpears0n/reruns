@@ -43,10 +43,21 @@
   let point = false
   let place = $state<{ left: number; top: number } | null>(null)
   let opener: HTMLElement | null = null
+  let openingScroll = new Map<Element, { top: number; left: number }>()
 
   const rows = () => [...(panel?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)') ?? [])]
 
   async function show() {
+    // A focused/scrolled-into-view trigger may have a scroll event queued
+    // before its click. Remember the actual positions at opening so that
+    // event does not immediately dismiss an otherwise stationary menu.
+    openingScroll = new Map()
+    let ancestor = point ? document.elementFromPoint(Math.min(innerWidth - 1, from.left), Math.min(innerHeight - 1, from.top)) : opener
+    while (ancestor) {
+      openingScroll.set(ancestor, { top: ancestor.scrollTop, left: ancestor.scrollLeft })
+      ancestor = ancestor.parentElement
+    }
+    if (document.scrollingElement) openingScroll.set(document.scrollingElement, { top: document.scrollingElement.scrollTop, left: document.scrollingElement.scrollLeft })
     place = null
     open = true
     await tick()
@@ -62,7 +73,9 @@
     place = { left, top }
     // Hidden until placed, and nothing hidden takes focus: wait for it to show.
     await tick()
-    ;(menu ? rows()[0] : (panel.querySelector<HTMLElement>('[autofocus], [tabindex="0"], button, input, select') ?? panel))?.focus()
+    // The panel is already placed inside the viewport. Native focus scrolling
+    // can still move the underlying library and immediately dismiss its menu.
+    ;(menu ? rows()[0] : (panel.querySelector<HTMLElement>('[autofocus], [tabindex="0"], button, input, select') ?? panel))?.focus({ preventScroll: true })
   }
 
   /** Open under (or over) an element, as if it were the trigger. */
@@ -86,7 +99,7 @@
     open = false
     // Once the panel is gone, and only if nothing else took the focus: a row
     // may have opened a field or another panel that wants it.
-    if (refocus) setTimeout(() => document.activeElement === document.body && opener?.isConnected && opener.focus())
+    if (refocus) setTimeout(() => document.activeElement === document.body && opener?.isConnected && opener.focus({ preventScroll: true }))
   }
 
   function toggle(e: MouseEvent) {
@@ -122,9 +135,18 @@
     // The click goes on to whatever was clicked; focus goes with it.
     close(false)
   }
+
+  function scrolled(e: Event) {
+    const target = e.target === document ? document.scrollingElement : e.target
+    if (target instanceof Element) {
+      const before = openingScroll.get(target)
+      if (before && before.top === target.scrollTop && before.left === target.scrollLeft) return
+    }
+    outside(e)
+  }
 </script>
 
-<svelte:window onpointerdowncapture={outside} onscrollcapture={outside} onresize={() => close(false)} onblur={() => close(false)} />
+<svelte:window onpointerdowncapture={outside} onscrollcapture={scrolled} onresize={() => close(false)} onblur={() => close(false)} />
 
 {@render trigger?.({ onclick: toggle, 'aria-haspopup': menu ? 'menu' : 'dialog', 'aria-expanded': open })}
 

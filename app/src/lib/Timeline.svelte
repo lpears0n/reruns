@@ -1,12 +1,10 @@
 <!--
-  The viewer's one timeline: the clip's frames as a filmstrip, its audio as
-  a thin lane under them. Click or drag on it to seek. The two handles at
-  its ends set what is kept; they can be dragged at once, with no editing
-  mode: what is cut is dimmed, what is kept has a thin accent edge (fainter
-  while it is the whole clip). The playhead is the brightest thing on it;
-  a handle comes forward under the pointer, the keyboard or a drag, and
-  then says its time. Handles take the arrow keys. Moments marked while recording stand as flags; clicking one jumps
-  there.
+  In review, one quiet seek bar. While trimming, the clip's frames become
+  a filmstrip with its audio underneath and two handles setting what is
+  kept. Cut footage dims; kept footage has a thin accent edge. The playhead
+  is the brightest thing. Handles take arrow keys and show their times
+  under the pointer, keyboard focus or a drag. Marked moments sit above
+  the frames; clicking one jumps there.
 -->
 <script lang="ts">
   import { timecode } from './format'
@@ -14,12 +12,14 @@
   let {
     duration,
     time,
+    editing = true,
     start = $bindable(),
     end = $bindable(),
     sprite = null,
     frames = 0,
     peaks = null,
     markers = [],
+    saved = null,
     slow = false,
     slowFrom = $bindable(0),
     slowTo = $bindable(0),
@@ -27,6 +27,8 @@
   }: {
     duration: number
     time: number
+    /** False gives a simple playback seek bar; true reveals trim tools. */
+    editing?: boolean
     start: number
     end: number
     /** URL of the clip's frames in one row (the hover sprite), when it has one. */
@@ -37,6 +39,8 @@
     peaks?: Float32Array | null
     /** Marked moments, in seconds. */
     markers?: number[]
+    /** Where the save hotkey was pressed, in seconds: a replay ends there. */
+    saved?: number | null
     /** Show and edit a slow-motion range inside the trim. */
     slow?: boolean
     slowFrom?: number
@@ -59,9 +63,24 @@
   /** Nothing trimmed yet: the kept range's edge stays faint. */
   const whole = $derived(start <= 0.001 && end >= duration - 0.001)
 
+  // Neighbouring moments share the space between their centres. Keep the
+  // usual 20 px target where it fits, without covering a nearby mark.
+  // Coincident marks share one target; a save at that point joins its label.
+  const marked = $derived([...new Set(markers.map((m) => Math.min(duration, Math.max(0, m))))].sort((a, b) => a - b))
+  const savedTime = $derived(saved !== null && saved <= duration + 0.05 ? Math.min(saved, duration) : null)
+  const separateSave = $derived(savedTime !== null && !marked.includes(savedTime))
+  const targetWidths = $derived.by(() => {
+    const times = [...marked, ...(separateSave ? [savedTime!] : [])].sort((a, b) => a - b)
+    return new Map(times.map((t, i) => [t, Math.min(
+      20,
+      i > 0 ? (frac(t) - frac(times[i - 1])) * width : 20,
+      i < times.length - 1 ? (frac(times[i + 1]) - frac(t)) * width : 20,
+    )]))
+  })
+
   // As many 16:9 cells as fit, each showing the frame nearest its moment.
   const cells = $derived.by(() => {
-    if (!sprite || frames < 1) return []
+    if (!editing || !sprite || frames < 1) return []
     const film = HEIGHT - (peaks === null ? 0 : WAVE)
     const n = Math.max(1, Math.round(width / ((film * 16) / 9)))
     return Array.from({ length: n }, (_, i) => Math.round(((i + 0.5) / n) * (frames - 1)))
@@ -124,7 +143,7 @@
 
 <!-- The handles stand just outside the strip's ends, over the workspace's margin. -->
 <div class="scrubber">
-  <div class={['strip', { resizing: drag && drag !== 'seek' }]} bind:this={strip} bind:clientWidth={width} onpointermove={move} onpointerup={up} onpointercancel={up} role="group" aria-label="Timeline">
+  <div class={['strip', { reviewing: !editing, resizing: drag && drag !== 'seek' }]} bind:this={strip} bind:clientWidth={width} onpointermove={move} onpointerup={up} onpointercancel={up} role="group" aria-label="Timeline">
     <div
       class="track"
       onpointerdown={(e) => down(e, 'seek')}
@@ -137,6 +156,7 @@
       aria-valuetext={timecode(time)}
       tabindex="0"
     >
+      {#if editing}
       <div class="film" aria-hidden="true">
         {#each cells as frame, i (i)}
           <div
@@ -156,8 +176,14 @@
       <div class="cut" style:left="0" style:width={pct(start)}></div>
       <div class="cut" style:left={pct(end)} style:right="0"></div>
       <div class={['kept', { whole }]} style:left={pct(start)} style:width="{(frac(end) - frac(start)) * 100}%"></div>
+      {:else}
+        <span class="seek-line" aria-hidden="true"></span>
+        <span class="seek-progress" style:transform="scaleX({frac(time)})" aria-hidden="true"></span>
+        <span class="seek-thumb" style:left={pct(time)} aria-hidden="true"></span>
+      {/if}
     </div>
 
+    {#if editing}
     {#if slow}
       <div class="slow-band" style:left={pct(slowFrom)} style:width="{(frac(slowTo) - frac(slowFrom)) * 100}%" title="Slow motion"></div>
       {#each [['slowFrom', slowFrom, 'Slow motion start'], ['slowTo', slowTo, 'Slow motion end']] as const as [what, t, label] (what)}
@@ -176,19 +202,32 @@
         ></div>
       {/each}
     {/if}
-    {#each markers as m, i (i)}
+    {#each marked as m (m)}
       <button
         class="tick"
         style:left={pct(m)}
+        style:width="{targetWidths.get(m)}px"
         onpointerdown={(e) => {
           e.stopPropagation()
           onseek(m)
         }}
-        aria-label="Marked moment at {m.toFixed(1)} s"
-        title="Marked moment"
+        aria-label="Marked moment at {timecode(m)}{m === savedTime ? ', saved here' : ''}"
         tabindex="-1"
-      ></button>
+      ><span class="tag">Marked {timecode(m)}{m === savedTime ? ' (saved here)' : ''}</span></button>
     {/each}
+    {#if separateSave && savedTime !== null}
+      <button
+        class="tick saved"
+        style:left={pct(savedTime)}
+        style:width="{targetWidths.get(savedTime)}px"
+        onpointerdown={(e) => {
+          e.stopPropagation()
+          onseek(Math.max(0, savedTime! - 0.05))
+        }}
+        aria-label="Saved at {timecode(savedTime)}"
+        tabindex="-1"
+      ><span class="tag">Saved here</span></button>
+    {/if}
     {#each [['start', start, 'Trim start'], ['end', end, 'Trim end']] as const as [what, t, label] (what)}
       <div
         class={['handle', what, { held: drag === what }]}
@@ -209,6 +248,7 @@
     <!-- Moves every frame while playing, so by transform: a full-width
          layer shifted by the fraction (compositor only, no layout). -->
     <div class="head" style:transform="translateX({pct(time)})"><div class="line"></div></div>
+    {/if}
   </div>
 </div>
 
@@ -219,9 +259,11 @@
     padding: 0;
   }
 
+  /* A 16 px lane over the frames holds the marked moments, so no mark is
+     ever drawn on top of a frame or mistaken for the playhead. */
   .strip {
     position: relative;
-    height: 60px;
+    height: 76px;
     touch-action: none;
   }
 
@@ -234,7 +276,7 @@
 
   .track {
     position: absolute;
-    inset: 0;
+    inset: 16px 0 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -245,6 +287,50 @@
 
   .track:focus-visible {
     outline-offset: 3px;
+  }
+
+  .strip.reviewing {
+    height: 24px;
+  }
+
+  .reviewing .track {
+    inset: 0;
+    overflow: visible;
+    background: none;
+  }
+
+  .seek-line,
+  .seek-progress {
+    position: absolute;
+    inset: 10px 0;
+    border-radius: 2px;
+    pointer-events: none;
+  }
+
+  .seek-line {
+    background: var(--color-line-strong);
+  }
+
+  .seek-progress {
+    background: var(--color-fg);
+    transform-origin: left;
+  }
+
+  .seek-thumb {
+    position: absolute;
+    top: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--color-fg);
+    translate: -50% 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .reviewing:is(:hover, :focus-within) .seek-thumb {
+    opacity: 1;
   }
 
   .film {
@@ -283,7 +369,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    background: rgb(21 23 25 / 66%);
+    background: color-mix(in oklab, var(--color-canvas) 76%, transparent);
     pointer-events: none;
   }
 
@@ -301,18 +387,18 @@
   }
 
   .kept.whole {
-    --edge: rgb(255 152 94 / 40%);
+    --edge: color-mix(in oklab, var(--color-accent) 32%, transparent);
   }
 
   /* In and out: a slim bar of the accent outside each end of the kept
-     range, a little quieter than the accent itself. The bar is 4 px; what
+     range, a little quieter than the accent itself. The bar is 5 px; what
      can be grabbed is 24. Touched, it widens from its inner edge (by
      transform: nothing moves) and takes the full accent. */
   .handle {
     position: absolute;
-    top: 0;
+    top: 16px;
     bottom: 0;
-    width: 4px;
+    width: 5px;
     cursor: ew-resize;
   }
 
@@ -329,6 +415,7 @@
     inset: 0;
     border-radius: inherit;
     background: color-mix(in oklab, var(--color-accent) 82%, var(--color-canvas));
+    box-shadow: inset 1px 0 0 rgb(255 255 255 / 14%);
     transition:
       background-color var(--duration-fast) var(--ease-out),
       scale var(--duration-fast) var(--ease-out);
@@ -338,7 +425,7 @@
   .handle.held::after,
   .handle:focus-visible::after {
     background: var(--color-accent-hover);
-    scale: 1.5 1;
+    scale: 1.4 1;
   }
 
   .handle:focus-visible {
@@ -409,7 +496,7 @@
   .line {
     position: absolute;
     left: 0;
-    top: -5px;
+    top: 11px;
     bottom: -3px;
     width: 2px;
     background: #fff;
@@ -433,7 +520,7 @@
      own so it reads apart from the trim handles. */
   .slow-band {
     position: absolute;
-    top: 2px;
+    top: 18px;
     bottom: 2px;
     background: repeating-linear-gradient(135deg, rgb(255 255 255 / 30%) 0 4px, rgb(255 255 255 / 6%) 4px 8px);
     pointer-events: none;
@@ -441,7 +528,7 @@
 
   .slow-marker {
     position: absolute;
-    top: 2px;
+    top: 18px;
     bottom: 2px;
     width: 14px;
     translate: -50% 0;
@@ -461,29 +548,97 @@
     translate: -50% 0;
   }
 
-  /* Marked moments: a flag hung from the top edge on a hairline down the
-     strip, with a wider invisible hit area. */
+  /* Marked moments: a diamond in the lane over the frames, a faint thread
+     down through them. A different shape, a different place and a quieter
+     tone than the playhead (a white line through everything) and the trim
+     handles (orange bars at the ends). Up to 20 px to aim at. */
   .tick {
     position: absolute;
     top: 0;
-    bottom: 0;
-    width: 12px;
+    height: 16px;
+    width: 20px;
     padding: 0;
     border: 0;
-    background: linear-gradient(rgb(255 255 255 / 55%), rgb(255 255 255 / 55%)) center / 1px 100% no-repeat;
+    background: none;
     translate: -50% 0;
     cursor: pointer;
   }
 
+  /* The thread belongs to the mark visually, but seeking and trimming
+     below the marker lane always reach the footage and its handles. */
+  .tick::before {
+    content: '';
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    width: 1px;
+    height: 60px;
+    background: rgb(255 255 255 / 22%);
+    pointer-events: none;
+  }
+
+  /* The moment's diamond: white, as on the cards in the library. */
   .tick::after {
     content: '';
     position: absolute;
     left: 50%;
-    top: 0;
-    width: 7px;
-    height: 9px;
-    background: #fff;
-    clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%);
+    top: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 1px;
+    background: var(--color-fg-2);
+    box-shadow: 0 0 0 2px var(--color-chrome);
     translate: -50% 0;
+    rotate: 45deg;
+    pointer-events: none;
+    transition: scale var(--duration-fast) var(--ease-out);
+  }
+
+  .tick:hover::after {
+    background: var(--color-fg);
+    scale: 1.25;
+  }
+
+  /* Where F8 was pressed: the same diamond, hollow. A replay ends there;
+     with time kept after the press it would sit inside the clip. */
+  .tick.saved::before {
+    display: none;
+  }
+
+  .tick.saved::after {
+    background: var(--color-chrome);
+    box-shadow:
+      inset 0 0 0 1.5px var(--color-fg-2),
+      0 0 0 2px var(--color-chrome);
+  }
+
+  /* Its name, over the lane, while pointed at. */
+  .tag {
+    position: absolute;
+    bottom: calc(100% - 2px);
+    left: 50%;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--color-raised);
+    box-shadow: 0 0 0 1px var(--color-line-strong);
+    color: var(--color-fg);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
+    translate: -50% 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .tick:hover .tag {
+    opacity: 1;
+  }
+
+  .tick.saved .tag {
+    left: auto;
+    right: 0;
+    translate: 0 0;
   }
 </style>

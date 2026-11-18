@@ -38,6 +38,9 @@ pub struct Clip {
     /// the sources' own tracks follow it, and are what the editor's levels
     /// set.
     pub mixed_audio: bool,
+    /// The moment picked as the clip's picture, in seconds from the start;
+    /// `thumbnail` is that frame when set.
+    pub cover: Option<f64>,
 }
 
 /// Saved next to each clip as `<clip>.mp4.json`. The folder stays the
@@ -60,6 +63,9 @@ pub struct ClipMeta {
     /// own tracks follow (recordings with game audio and a mic).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub mixed_audio: bool,
+    /// The moment picked in the viewer as the clip's picture, in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover: Option<f64>,
 }
 
 /// What the UI may change on a clip; `None` leaves a field alone.
@@ -69,6 +75,8 @@ pub struct MetaPatch {
     pub title: Option<String>,
     pub favorite: Option<bool>,
     pub labels: Option<Vec<String>>,
+    /// A negative value clears it.
+    pub cover: Option<f64>,
 }
 
 const MAX_TITLE: usize = 120;
@@ -99,6 +107,9 @@ impl ClipMeta {
                 }
             }
             self.labels = out;
+        }
+        if let Some(c) = patch.cover {
+            self.cover = (c.is_finite() && c >= 0.0).then_some(c);
         }
     }
 }
@@ -150,7 +161,13 @@ pub fn update_meta(clips_dir: &Path, path: &Path, patch: MetaPatch) -> Result<Cl
             .unwrap_or_default(),
         ..Default::default()
     });
+    let cover = meta.cover;
     meta.apply(patch);
+    if let Some(at) = meta.cover.filter(|_| meta.cover != cover) {
+        // Before the sidecar names it: a frame that can't be read leaves the
+        // clip as it was.
+        make_cover(path, at)?;
+    }
     write_meta(&target, &meta)?;
     let game = meta.game.clone();
     // Under the path the page knows it by: the canonical one can differ
@@ -165,6 +182,10 @@ pub fn update_meta(clips_dir: &Path, path: &Path, patch: MetaPatch) -> Result<Cl
 pub fn copy_meta(from: &Path, to: &Path, start: f64, end: f64) {
     if let Some(mut m) = read_meta(from) {
         m.markers = trim_markers(&m.markers, start, end);
+        m.cover = m
+            .cover
+            .filter(|c| (start..=end).contains(c))
+            .map(|c| c - start);
         // An edit has one audio track, already mixed at the chosen levels.
         m.mixed_audio = false;
         let _ = write_meta(to, &m);
@@ -278,7 +299,7 @@ pub fn list(clips_dir: &Path) -> Vec<Clip> {
 }
 
 /// Bumped whenever the generated images change shape or format.
-const THUMB_VERSION: u32 = 3;
+const THUMB_VERSION: u32 = 4;
 
 /// Cache files for a clip, keyed by path + size + mtime (so a rewritten
 /// file gets new images) and the generator version. The image extension
@@ -287,6 +308,17 @@ struct CacheFiles {
     thumb: PathBuf,
     sprite: PathBuf,
     info: PathBuf,
+}
+
+impl CacheFiles {
+    /// The picked cover at `at` seconds: named by the moment, so a new pick
+    /// is a new picture to the page rather than a stale cached one.
+    fn cover(&self, at: f64) -> PathBuf {
+        let stem = self.thumb.file_stem().unwrap_or_default().to_string_lossy();
+        let ext = self.thumb.extension().unwrap_or_default().to_string_lossy();
+        self.thumb
+            .with_file_name(format!("{stem}.at{}.{ext}", (at * 1000.0).round() as u64))
+    }
 }
 
 fn cache_files(path: &Path, size: u64, created_ms: u64, ext: &str) -> CacheFiles {
@@ -324,9 +356,13 @@ pub fn load(path: &Path, game: &str) -> Result<Clip> {
     let info = std::fs::read_to_string(&files.info)
         .ok()
         .and_then(|s| serde_json::from_str::<CachedInfo>(&s).ok());
-    let has_images = files.thumb.exists() && files.sprite.exists();
-
     let user = read_meta(path).unwrap_or_default();
+    let cover = user.cover.map(|at| files.cover(at));
+    // A picked cover not made here yet (the cache was cleared, the folder
+    // came from another machine) counts as missing, so the pool makes it.
+    let has_images =
+        files.thumb.exists() && files.sprite.exists() && cover.as_ref().is_none_or(|c| c.exists());
+
     Ok(Clip {
         path: path.to_owned(),
         game: game.to_owned(),
@@ -340,7 +376,7 @@ pub fn load(path: &Path, game: &str) -> Result<Clip> {
         audio_tracks: info.as_ref().map(|c| c.audio_tracks).unwrap_or(0),
         is_edit: is_edit(path),
         steam_app_id: user.steam_app_id,
-        thumbnail: has_images.then(|| files.thumb.clone()),
+        thumbnail: has_images.then(|| cover.unwrap_or_else(|| files.thumb.clone())),
         sprite: has_images.then(|| files.sprite.clone()),
         sprite_frames: clip_core::media::SPRITE_FRAMES,
         title: user.title,
@@ -348,6 +384,7 @@ pub fn load(path: &Path, game: &str) -> Result<Clip> {
         labels: user.labels,
         markers: user.markers,
         mixed_audio: user.mixed_audio,
+        cover: user.cover,
     })
 }
 
@@ -365,11 +402,29 @@ pub fn generate(path: &Path) -> Result<()> {
     std::fs::create_dir_all(cache_dir())?;
     std::fs::write(&files.thumb, &info.thumbnail)?;
     std::fs::write(&files.sprite, &info.sprite)?;
+    if let Some(at) = read_meta(path).and_then(|m| m.cover)
+        && let Err(e) = make_cover(path, at)
+    {
+        // The usual frame instead, so the clip isn't left without a picture.
+        tracing::warn!("cover of {}: {e:#}", path.display());
+        std::fs::write(files.cover(at), &info.thumbnail)?;
+    }
     let c = CachedInfo {
         duration: info.duration.seconds_f64(),
         audio_tracks: info.audio_tracks,
     };
     std::fs::write(&files.info, serde_json::to_string(&c)?)?;
+    Ok(())
+}
+
+/// The frame at `at` seconds as the clip's picture, made once.
+fn make_cover(path: &Path, at: f64) -> Result<()> {
+    let (size_bytes, created_ms) = file_times(path)?;
+    let file = cache_files(path, size_bytes, created_ms, image_ext()).cover(at);
+    if !file.exists() {
+        std::fs::create_dir_all(cache_dir())?;
+        clip_core::save::write_atomic(&file, &clip_core::media::thumbnail_at(path, at)?)?;
+    }
     Ok(())
 }
 
@@ -454,10 +509,12 @@ mod tests {
                 "".into(),
                 "funny".into(),
             ]),
+            cover: Some(7.25),
         });
         assert_eq!(m.title.as_deref(), Some("Ace"));
         assert!(m.favorite);
         assert_eq!(m.labels, ["clutch", "funny"]);
+        assert_eq!(m.cover, Some(7.25));
 
         // Untouched fields stay; an empty title clears it.
         m.apply(MetaPatch {
@@ -467,6 +524,14 @@ mod tests {
         assert_eq!(m.title, None);
         assert!(m.favorite);
         assert_eq!(m.labels, ["clutch", "funny"]);
+        assert_eq!(m.cover, Some(7.25));
+
+        // A negative cover clears it.
+        m.apply(MetaPatch {
+            cover: Some(-1.0),
+            ..Default::default()
+        });
+        assert_eq!(m.cover, None);
     }
 
     #[test]
@@ -493,6 +558,7 @@ mod tests {
             game: "Hades".into(),
             markers: vec![3.0, 8.0],
             mixed_audio: true,
+            cover: Some(4.5),
             ..Default::default()
         };
         write_meta(&src, &m).unwrap();
@@ -500,6 +566,11 @@ mod tests {
         let copied = read_meta(&out).unwrap();
         assert_eq!(copied.game, "Hades");
         assert_eq!(copied.markers, [1.0]);
+        // The cover moves with the trim, and goes when trimmed away.
+        assert_eq!(copied.cover, Some(2.5));
+        copy_meta(&src, &out, 5.0, 6.0);
+        assert_eq!(read_meta(&out).unwrap().cover, None);
+        copy_meta(&src, &out, 2.0, 6.0);
         // The recording starts with game and mic mixed; an edit has one
         // track, already mixed.
         std::fs::write(&src, b"x").unwrap();

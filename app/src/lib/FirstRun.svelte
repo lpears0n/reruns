@@ -1,4 +1,4 @@
-<!-- The library before its first clip: what is set up, and where to change it. -->
+<!-- The empty library needs one instruction, with setup only when needed. -->
 <script lang="ts">
   import type { Settings, Status } from './api'
   import type { Category } from './SettingsView.svelte'
@@ -6,7 +6,6 @@
   let {
     hotkey,
     status,
-    settings,
     onchoosescreen,
     onsettings,
   }: {
@@ -17,55 +16,67 @@
     onsettings: (c: Category) => void
   } = $props()
 
-  const capture = $derived.by(() => {
-    if (!status) return { ok: false, text: 'Starting…' }
-    if (status.needs_screen) return { ok: false, text: 'Choose the screen to record. Your desktop asks once.', action: 'screen' as const }
-    if (status.state === 'unavailable') return { ok: false, text: status.error ?? 'Capture unavailable.', action: 'recording' as const }
-    return {
-      ok: true,
-      text:
-        status.backend === 'kwin' || status.backend === 'windows'
-          ? 'Starts by itself when a game opens. No prompts.'
-          : 'Records the screen you chose when a game opens.',
-    }
-  })
-  const folder = $derived(settings?.clips_dir.replace(/^\/home\/[^/]+/, '~') ?? '…')
+  const setup = $derived(status?.needs_screen ? 'screen' : status?.state === 'unavailable' || status?.state === 'retrying' ? 'recording' : null)
 </script>
 
-<div class="mx-auto flex h-full max-w-xl flex-col justify-center pb-10">
-  <h2 class="text-title font-semibold">No clips yet</h2>
-  <p class="mt-1 text-fg-2">Play something, then press {hotkey} to keep the last {settings?.replay_seconds ?? 30} seconds.</p>
+<section class="first-run" aria-label="Getting started">
+  <h2>No clips yet</h2>
+  <p>Press <span class="hotkey">{hotkey}</span> while playing to save a clip.</p>
 
-  <ol class="mt-5 divide-y divide-line border-y border-line">
-    <li class="flex min-h-16 items-center gap-3 py-3">
-      <!-- Only capture has a state to report: a dot, as in the capture strip. -->
-      <span class="size-2 flex-none rounded-full {capture.ok ? 'bg-signal-ok' : 'bg-warn'}" data-ok={capture.ok}></span>
-      <div class="min-w-0 flex-1">
-        <div class="text-fg">Capture</div>
-        <div class="truncate text-secondary text-fg-2" title={capture.text}>{capture.text}</div>
-      </div>
-      {#if capture.action === 'screen'}
+  {#if setup}
+    <div class="setup-action">
+      {#if setup === 'screen'}
         <button class="btn-primary" onclick={onchoosescreen}>Choose screen</button>
-      {:else if capture.action === 'recording'}
+      {:else}
         <button class="btn-sm" onclick={() => onsettings('Recording')}>Recording settings</button>
       {/if}
-    </li>
-    <li class="flex min-h-16 items-center gap-3 py-3">
-      <span class="size-2 flex-none"></span>
-      <div class="min-w-0 flex-1">
-        <div class="text-fg">Save replay</div>
-        <div class="text-secondary text-fg-2">{hotkey} in any game.</div>
-      </div>
-      <button class="btn-sm" onclick={() => onsettings('Hotkeys')}>Change</button>
-    </li>
-    <li class="flex min-h-16 items-center gap-3 py-3">
-      <span class="size-2 flex-none"></span>
-      <div class="min-w-0 flex-1">
-        <div class="text-fg">Clips folder</div>
-        <div class="truncate text-secondary text-fg-2" title={settings?.clips_dir}>{folder}</div>
-      </div>
-      <button class="btn-sm" onclick={() => onsettings('Storage')}>Change</button>
-    </li>
-  </ol>
-  <p class="mt-4 text-secondary text-fg-2">Drop any video here to trim it.</p>
-</div>
+    </div>
+  {/if}
+
+  <div class="setup-links">
+    <button class="btn-text" onclick={() => onsettings('Hotkeys')}>Change hotkey</button>
+    <button class="btn-text" onclick={() => onsettings('Storage')}>Clips folder</button>
+  </div>
+</section>
+
+<style>
+  .first-run {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    width: 100%;
+    max-width: 420px;
+    min-height: 240px;
+    height: 100%;
+    margin-inline: auto;
+    padding-block: 24px 48px;
+  }
+
+  h2 {
+    font-size: 20px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.25px;
+  }
+
+  p {
+    margin-top: 7px;
+    color: var(--color-fg-2);
+    line-height: 22px;
+    overflow-wrap: anywhere;
+  }
+
+  .hotkey { color: var(--color-fg); font-weight: 600; }
+  .setup-action { margin-top: 18px; }
+
+  .setup-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 16px;
+    margin-left: -8px;
+  }
+
+  .setup-links :global(button) { color: var(--color-muted); font-size: var(--text-secondary); }
+  .setup-links :global(button:hover) { color: var(--color-fg); }
+</style>

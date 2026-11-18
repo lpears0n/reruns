@@ -66,16 +66,25 @@ How to meet it:
 - **Keep large arrays out of deep `$state`.** A Svelte issue shows 10k-item
   proxied arrays freezing the app. `allClips` should be `$state.raw` and
   replaced wholesale, with filtered/sorted views as `$derived`.
-- **Images:** thumbnails at the size they are shown (320×180 for
-  comfortable, 240×135 compact), WebP, `loading="lazy"`,
+- **Images:** covers at 960 px wide for large cards at desktop scaling,
+  WebP (JPEG where the encoder is unavailable), `loading="lazy"`,
   `decoding="async"`, explicit `width`/`height` so nothing reflows when
-  they land. Today thumbnails are JPEG at the capture size.
+  they land. The cover is selected from the existing decode samples with a
+  bounded luminance/detail score; manual cover timestamps stay authoritative.
+  Keep sprite frames independently sized at 160 px so larger covers do not
+  multiply strip memory. Cache versions invalidate lower-resolution covers.
 - **Hover previews** are the right idea but should start after 450 ms
   (done), be limited to one at a time (done by hover), and should use a
   low-bitrate proxy or a sprite sheet rather than the full clip, since a
   100 Mbps HEVC clip is heavy to decode for a 300 px preview. Sprite
   sheets are what every video platform uses: one pass with GStreamer,
   10 frames at 160×90, one WebP, scrub by `background-position`.
+- **Ambient lighting:** one static gradient layer per library/viewer, and
+  a radial gradient on the hovered or focused card. No blur filters,
+  per-card `will-change`, continuous animation or video-frame sampling.
+  Extract colour from a 24 × 24 copy of an image once, cache by image URL,
+  and defer card sampling until its first hover/focus. Reuse that colour
+  through scrubbing, playback and returning to the library.
 
 ### 3.3 IPC and data flow
 

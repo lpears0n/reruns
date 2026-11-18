@@ -57,6 +57,9 @@ export interface Clip {
   /** The first audio track is game and mic mixed (what players play); the
    *  sources' own tracks follow, and the editor's levels are for those. */
   mixed_audio?: boolean
+  /** The moment picked as its picture, in seconds; `thumbnail` is that
+   *  frame once made. */
+  cover?: number | null
 }
 
 /** A screenshot next to the clips: `<clips folder>/<game>/<time>.png`. */
@@ -83,6 +86,8 @@ export interface ClipPatch {
   title?: string
   favorite?: boolean
   labels?: string[]
+  /** Seconds into the clip; negative clears it. */
+  cover?: number
 }
 
 /** A newer release than the running one. */

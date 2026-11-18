@@ -250,15 +250,16 @@
 <header class="page-header">
   <h1 class="min-w-0 flex-1 truncate font-display text-page font-semibold">{category}</h1>
   {#if notice}
-    {#key notice.text}
+    {#key notice.persistent ? 'work' : notice.text}
       <div class="said flex max-w-[60%] min-w-0 items-center gap-1 text-secondary {notice.error ? 'text-danger' : ''}" role="status" aria-live="polite">
         <span class="truncate" title={notice.text}>{notice.text}</span>
         {#if notice.action}
           <button class="btn-text" onclick={notice.action.run}>{notice.action.label}</button>
         {/if}
-        <button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss">
-          <X size={15} />
-        </button>
+        {#if notice.secondaryAction}<button class="btn-text" onclick={notice.secondaryAction.run}>{notice.secondaryAction.label}</button>{/if}
+        {#if !notice.persistent}
+          <button class="btn-icon-sm text-muted" onclick={ondismiss} aria-label="Dismiss"><X size={15} /></button>
+        {/if}
       </div>
     {/key}
   {/if}

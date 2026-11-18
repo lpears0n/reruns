@@ -1,0 +1,42 @@
+/*
+  Direction A: the same rooms, better lit. One quiet warm hue (umber, the
+  accent's own family) through every surface instead of a cool grey, the navigation a step deeper than the
+  page so the library reads as the lit stage, warm white text against it,
+  and the orange accent unchanged. Opaque throughout.
+
+  `:root:root` so these win over tokens.css whatever order the sheets load.
+*/
+:root:root {
+  --t-canvas: oklch(0.196 0.011 62);
+  --t-chrome: oklch(0.16 0.009 62);
+  --t-raised: oklch(0.257 0.013 62);
+  --t-hover: oklch(0.302 0.015 62);
+  --t-line: oklch(0.262 0.011 62);
+  --t-line-strong: oklch(0.36 0.013 62);
+  --t-fg: #f5f1ea;
+  --t-fg-2: oklch(0.8 0.013 75);
+  --t-muted: oklch(0.7 0.014 75);
+  --t-faint: oklch(0.49 0.012 70);
+  /* Menus and popovers: a firmer edge on the warm surfaces. */
+  --t-shadow-pop: 0 0 0 1px oklch(0.38 0.015 62), 0 2px 6px rgb(0 0 0 / 34%), 0 16px 36px rgb(0 0 0 / 46%);
+}
+
+/* The navigation is recessed: the page meets it at a hairline. */
+aside.nav {
+  box-shadow: inset -1px 0 0 oklch(0.13 0.008 62);
+}
+
+/* Pressable things answer the finger: down a pixel, a step darker. */
+.btn-primary:active:not(:disabled),
+.btn:active:not(:disabled),
+.btn-sm:active:not(:disabled) {
+  translate: 0 1px;
+}
+
+/* The one main action: a top light on the fill, so it reads as a key. */
+.btn-primary {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 28%), 0 1px 0 rgb(0 0 0 / 35%);
+}
+.btn-primary:active:not(:disabled) {
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 22%);
+}

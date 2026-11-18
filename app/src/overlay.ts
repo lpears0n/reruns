@@ -9,7 +9,7 @@ interface Popup {
   kind: 'ready' | 'saved' | 'screenshot' | 'marked'
   title: string
   detail: string
-  /** Hotkey to show as a key cap after the detail, if any. */
+  /** Hotkey named in the clipping instruction, if any. */
   key: string | null
   /** How long the window stays up. */
   ms: number

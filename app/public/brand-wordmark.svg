@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="130" height="26" viewBox="0 0 130 26" fill="#f1f0eb">
+  <title>Reruns</title>
+  <!-- Outlined lowercase lettering: the mark's broad stems, square
+       counters and cut shoulders, with each letter on the same baseline. -->
+  <path transform="matrix(.75 -.09208842 0 .75 0 3.2278456)" d="M0 0H13.2L20 7V13.44H12.6V8.96H7.4V28H0Z"/>
+  <path transform="matrix(1 -.12278456 0 1 19 3.2278456)" fill-rule="evenodd" d="M5 0H15L20 5V12H5V16H20V21H5L0 16V5ZM5 5V8H15V5Z"/>
+  <path transform="matrix(.75 -.09208842 0 .75 43 3.2278456)" d="M0 0H13.2L20 7V13.44H12.6V8.96H7.4V28H0Z"/>
+  <path transform="matrix(1 -.12278456 0 1 62 3.2278456)" d="M0 0H5V16H15V0H20V21H5L0 16Z"/>
+  <path transform="matrix(1 -.12278456 0 1 86 3.2278456)" d="M0 0H15L20 5V21H15V5H5V21H0Z"/>
+  <path transform="matrix(1 -.12278456 0 1 110 3.2278456)" d="M5 0H20V5H5V8H15L20 13V16L15 21H0V16H15V13H5L0 8V5Z"/>
+</svg>

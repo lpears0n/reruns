@@ -1,17 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#22232A"/>
-      <stop offset="1" stop-color="#0F1013"/>
-    </linearGradient>
-    <linearGradient id="accent" gradientUnits="userSpaceOnUse" x1="250" y1="180" x2="800" y2="840">
-      <stop offset="0" stop-color="#FFA552"/>
-      <stop offset="1" stop-color="#FF5F1F"/>
-    </linearGradient>
-  </defs>
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile)"/>
-  <rect x="64.5" y="64.5" width="895" height="895" rx="199.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
-  <path d="M 512.0 244.0 A 268 268 0 1 1 249.9 456.3" fill="none" stroke="url(#accent)" stroke-width="104" stroke-linecap="round"/>
-  <path d="M 382.6 244.0 L 522.0 138.4 L 522.0 349.6 Z" fill="url(#accent)" stroke="url(#accent)" stroke-width="28" stroke-linejoin="round"/>
-  <path d="M 445.0 406.0 L 445.0 618.0 L 640.0 512.0 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="44" stroke-linejoin="round"/>
+  <title>Reruns</title>
+  <!-- A flat ink field keeps the light mark legible on any desktop.
+       The corner cuts belong to the same geometry as the r shoulders. -->
+  <path fill="#161718" d="M80 32H944L992 80V944L944 992H80L32 944V80Z"/>
+  <g fill="#f1f0eb" transform="translate(128 132) scale(21.33333333)">
+    <path transform="matrix(1 -.12278456 0 1 0 5.2278456)" d="M0 0H13.2L20 7V13.44H12.6V8.96H7.4V28H0Z"/>
+    <path transform="matrix(1 -.12278456 0 1 16 2.2278456)" d="M0 0H13.2L20 7V13.44H12.6V8.96H7.4V28H0Z"/>
+  </g>
 </svg>

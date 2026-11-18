@@ -1,7 +1,7 @@
 <!--
   The clip grid: sections, each a heading and rows of cards, as many to a
-  row as fit the width at `minWidth` each, so the grid always fills the
-  page. Above `threshold` items only the rows near the viewport are in the
+  row as fit the width at `minWidth` each. A maximum prevents a card from
+  swelling just below a column breakpoint. Above `threshold` items only the rows near the viewport are in the
   DOM. Columns are worked out here rather than by CSS, so the rows are
   known before anything is drawn; every card row is the same height,
   measured from one.
@@ -13,8 +13,10 @@
     sections,
     key,
     minWidth,
+    maxWidth = Infinity,
     threshold = 120,
     overscan = 2,
+    head = 36,
     heading,
     children,
   }: {
@@ -23,10 +25,14 @@
     key: (item: T) => string
     /** Narrowest a card may get before the row loses a column. */
     minWidth: number
+    /** A card may leave space at the row's end instead of growing past this. */
+    maxWidth?: number
     /** Item count above which windowing switches on. */
     threshold?: number
     /** Extra card rows' worth of height kept above and below the viewport. */
     overscan?: number
+    /** A heading row's height. */
+    head?: number
     heading: Snippet<[S]>
     children: Snippet<[T]>
   } = $props()
@@ -36,7 +42,7 @@
   /** A heading row. Over the last row's gap it leaves 22 px under a card's
    *  second line (40 under its title when that line is empty), and 12 px
    *  from the heading to its cards. */
-  const HEAD = 36
+  const HEAD = $derived(head)
 
   let root: HTMLDivElement | undefined = $state()
   let width = $state(1000)
@@ -130,7 +136,7 @@
       <div class="flex items-end gap-3 pb-3" style:height="{HEAD}px">{@render heading(row.head)}</div>
     {:else}
       <!-- The bottom padding is the gap to the next row, so a row's height is its pitch. -->
-      <div class="clip-grid grid gap-x-5 pb-5" style:grid-template-columns="repeat({columns}, minmax(0, 1fr))">
+      <div class="clip-grid grid gap-x-5 pb-5" style:grid-template-columns="repeat({columns}, minmax(0, {Number.isFinite(maxWidth) ? `${maxWidth}px` : '1fr'}))">
         {#each row.items as item (key(item))}
           {@render children(item)}
         {/each}

@@ -1,5 +1,5 @@
 // A colour per game: it tints the game's initial in the rail when there is
-// no picture of it. The chrome itself takes no game's colour (docs/DESIGN.md).
+// no picture of it, and supplies ambient light until artwork can be sampled.
 
 /** Chosen by hand; a game whose name starts with one of these gets it. */
 const KNOWN: [string, string][] = [

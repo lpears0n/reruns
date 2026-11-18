@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "reruns-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "app", "run", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "proto-a",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["app/prototypes/serve.cjs", "a"],
+      "port": 5174
+    },
+    {
+      "name": "proto-b",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["app/prototypes/serve.cjs", "b"],
+      "port": 5175
+    },
+    {
+      "name": "proto-base",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["app/prototypes/serve.cjs", "base"],
+      "port": 5176
+    }
+  ]
+}

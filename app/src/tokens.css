@@ -4,10 +4,9 @@
   without Tailwind). One list, so the popup can't drift from the app.
   See docs/DESIGN.md.
 
-  A media utility: warm charcoal surfaces that stay out of the way of the
-  gameplay, one warm accent for the thing to do, and the system's own
-  typeface. Every surface is opaque: no blur, no translucency, no
-  gradients behind content.
+  Neutral ink surfaces and offwhite controls leave color to the footage.
+  The pixel brand is a vector asset; interface text uses the system face.
+  Controls stay opaque and their corners remain close to square.
 */
 :root {
   /* The platform's own face: Segoe UI Variable on Windows 11, the
@@ -15,45 +14,45 @@
   --t-font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Noto Sans', Cantarell, sans-serif;
   --t-font-display: 'Segoe UI Variable Display', var(--t-font-sans);
 
-  /* Surfaces, back to front: the page where pictures sit; navigation and
-     controls; menus and dialogs; a control under the pointer. */
-  --t-canvas: #151719;
-  --t-chrome: #1c1f22;
-  --t-raised: #25292d;
-  --t-hover: #2f3439;
+  /* A recessed navigation, a graphite canvas, then solid control surfaces.
+     Separation comes from their lightness, not repeated blurred shadows. */
+  --t-nav: #121313;
+  --t-canvas: #1b1c1c;
+  --t-chrome: #232424;
+  --t-raised: #2b2c2c;
+  --t-hover: #373838;
   /* The popup's card (overlay.css). */
   --t-panel: var(--t-raised);
 
   /* Hairlines: between surfaces; round a control. */
-  --t-line: #2a2e32;
-  --t-line-strong: #3d4349;
+  --t-line: #343535;
+  --t-line-strong: #4b4d4c;
 
-  /* Text, on canvas: 15.6:1, 8.0:1, 5.6:1 (muted stays above 4.5:1 on
-     raised too). Faint is for marks and disabled things only, never for
-     words to be read. */
-  --t-fg: #f2f1ed;
-  --t-fg-2: #a9afb6;
-  --t-muted: #8d939b;
-  --t-faint: #5b6169;
+  /* Secondary text stays readable on raised controls as well as the canvas.
+     Faint is for marks and disabled things, never words to be read. */
+  --t-fg: #f1f0eb;
+  --t-fg-2: #c0c1bc;
+  --t-muted: #989c98;
+  --t-faint: #6e726e;
 
-  /* One accent, warm orange: the main action, the selected trim, the
-     selected destination, focus. Green is the recorder actually
-     capturing; red is an error or something destructive. */
-  --t-accent: #ff985e;
-  --t-accent-hover: #ffab7b;
-  --t-on-accent: #1d1208;
+  /* Offwhite identifies actions and focus. Red is reserved for errors
+     and destructive actions. Capture is described without status LEDs. */
+  --t-accent: #e4e5df;
+  --t-accent-hover: #f4f5ef;
+  --t-on-accent: #181a18;
   --t-danger: #f26d5f;
-  --t-ok: #4cc77a;
+  --t-ok: #d5d7ce;
   --t-warn: #e8b23a;
   --t-signal-ok: var(--t-ok);
   --t-signal-bad: var(--t-danger);
 
-  /* Radii: small marks; controls; media thumbnails; menus and dialogs.
-     Modest: a tool's rectangles, not tiles. */
-  --t-radius-chip: 3px;
-  --t-radius-ctl: 6px;
-  --t-radius-frame: 8px;
-  --t-radius-surface: 10px;
+  /* Tight corners on media and controls; the workspace has no enclosure. */
+  --t-radius-chip: 2px;
+  --t-radius-ctl: 3px;
+  --t-radius-frame: 4px;
+  --t-radius-overlay: 4px;
+  --t-radius-surface: 4px;
+  --t-radius-workspace: 0px;
 
   /* Elevation: only what leaves the page (a menu, a dialog) has a shadow. */
   --t-shadow-pop: 0 0 0 1px var(--t-line-strong), 0 2px 6px rgb(0 0 0 / 30%), 0 14px 32px rgb(0 0 0 / 42%);

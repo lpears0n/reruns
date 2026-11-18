@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "app/prototypes/a/Rail.svelte"
+        ],
+        "createdAt": "2026-11-15T04:23:22.815Z",
+        "reason": "Project design system: docs/DESIGN.md specifies a 3 x 16 px accent tab on the current navigation row; inherited unchanged from production src/lib/Rail.svelte"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "app/prototypes/b/Rail.svelte"
+        ],
+        "createdAt": "2026-11-15T04:23:22.904Z",
+        "reason": "Project design system: docs/DESIGN.md specifies a 3 x 16 px accent tab on the current navigation row; inherited unchanged from production src/lib/Rail.svelte"
+      }
+    ]
+  }
+}

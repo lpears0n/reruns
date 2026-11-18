@@ -130,11 +130,12 @@ export function ago(ms: number, now = Date.now()): string {
   return 'just now'
 }
 
-/** "1h 20m", "45m", "<1m". */
+/** "1h 20m", "2h", "45m", "<1m". */
 export function playtime(ms: number): string {
   const m = Math.floor(ms / 60000)
   if (m < 1) return '<1m'
   const h = Math.floor(m / 60)
+  if (h && m % 60 === 0) return `${h}h`
   return h ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`
 }
 

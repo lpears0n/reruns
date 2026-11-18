@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/lib/Rail.svelte"
+        ],
+        "createdAt": "2026-11-15T00:08:14.289Z",
+        "reason": "user's 2026-11-14 brief asked for 'one small orange indicator integrated cleanly into the selection': a 3x16 px tab inside the inset nav selection, not a card border"
+      }
+    ]
+  }
+}
