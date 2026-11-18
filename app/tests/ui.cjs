@@ -331,8 +331,10 @@ async function quickCopy(page) {
   const probes = await page.evaluate(() => window.__calls.filter((cmd) => cmd === 'open_for_edit').length)
   await page.evaluate(() => { window.__lastRender = null; window.__copied = null })
   await small.hover()
+  const copyWidth = await small.locator('.clip-copy').evaluate((el) => el.getBoundingClientRect().width)
   await small.getByRole('button', { name: 'Copy clip', exact: true }).click()
   await small.getByRole('button', { name: 'Copy clip', exact: true }).filter({ hasText: 'Copied' }).waitFor()
+  assert.equal(await small.locator('.clip-copy').evaluate((el) => el.getBoundingClientRect().width), copyWidth, 'Copied keeps the card button its width')
   assert.match(await page.evaluate(() => window.__copied), /clip-2\.mp4$/, 'a small clip copies directly from the library')
   assert.equal(await page.evaluate(() => window.__lastRender), null, 'a small clip needs no preparation')
   assert.equal(await page.evaluate(() => window.__calls.filter((cmd) => cmd === 'open_for_edit').length), probes, 'quick copying a small clip needs no media probe')
@@ -376,6 +378,47 @@ async function quickCopy(page) {
   await large.getByRole('button', { name: 'Copy clip', exact: true }).filter({ hasText: 'Copied' }).waitFor()
   assert.match(await page.evaluate(() => window.__copied), /clip-0_edit\.mp4$/, 'a large clip copies the prepared file')
   assert.equal(await page.locator('video').count(), 0, 'preparation stays in the library')
+}
+
+/** A focused card's own keys, Delete's neighbour, and Ctrl+Z. */
+async function cardKeys(page) {
+  const card = page.locator('.media-card[data-clip-path$="/clip-2.mp4"]')
+  const focusedPath = () => page.evaluate(() => document.activeElement?.closest('[data-clip-path]')?.dataset.clipPath ?? null)
+  assert.equal(await card.locator('button:not([tabindex="-1"])').count(), 1, 'one tab stop per card')
+  await page.evaluate(() => { window.__copied = null; window.__patch = null })
+  await card.locator('.clip-open').focus()
+  await page.keyboard.press('Control+c')
+  await page.waitForFunction(() => window.__copied)
+  assert.match(await page.evaluate(() => window.__copied), /clip-2\.mp4$/, 'Ctrl+C copies the focused card')
+  await page.waitForFunction(() => !document.querySelector('.clip-copy[aria-busy="true"]'))
+  const favorite = await card.locator('.favorite-mark').count()
+  await page.keyboard.press('f')
+  await page.waitForFunction(() => window.__patch)
+  assert.equal(await page.evaluate(() => window.__patch.favorite), !favorite, 'F toggles the focused card favorite')
+  await page.keyboard.press('f')
+  // Delete hands the keyboard to the next card; Ctrl+Z puts the card back with it.
+  const next = await page.evaluate(() => {
+    const all = [...document.querySelectorAll('main [data-clip-path]')]
+    const i = all.findIndex((c) => c.dataset.clipPath.endsWith('/clip-2.mp4'))
+    return all[i + 1]?.dataset.clipPath
+  })
+  await page.keyboard.press('Delete')
+  await card.waitFor({ state: 'detached' })
+  assert.equal(await focusedPath(), next, 'Delete moves the keyboard to the next card')
+  assert.equal(await page.getByRole('button', { name: 'Undo', exact: true }).getAttribute('aria-keyshortcuts'), 'Control+Z', 'the notice names its key')
+  await page.keyboard.press('Control+z')
+  await card.waitFor()
+  assert.match(await focusedPath(), /clip-2\.mp4$/, 'Ctrl+Z restores the card with the keyboard on it')
+  // The notice leaves with a short fade; then it is gone.
+  await page.getByRole('button', { name: 'Undo', exact: true }).waitFor({ state: 'detached', timeout: 1000 })
+  // Another collection starts at its newest clips.
+  const scroller = page.locator('.library-scroll')
+  await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  assert.ok(await scroller.evaluate((el) => el.scrollTop) > 0, 'the library scrolled')
+  await page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name: 'Favorites', exact: true }).click()
+  await page.waitForTimeout(100)
+  assert.equal(await scroller.evaluate((el) => el.scrollTop), 0, 'a new collection starts at the top')
+  await page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name: 'All clips', exact: true }).click()
 }
 
 const seekTo = (page, t) =>
@@ -445,8 +488,9 @@ async function runScenario(scenario, browser) {
     assert.ok((await page.locator('.library-toolbar').innerText()).includes('22 clips'), 'and how many')
     assert.equal(await libraryNav.getByRole('button', { name: 'All clips', exact: true }).getAttribute('aria-current'), 'page', 'opens on every clip')
     assert.equal(await gameChoice(page, 'Counter-Strike 2').count(), 1, 'games are named in the collection navigation')
-    assert.equal(await cards(), 22, 'every clip is in the grid')
-    assert.equal(await page.getByRole('button', { name: /^Open .* screenshot/ }).count(), 0, 'screenshots stay with their game')
+    assert.equal(await cards(), 24, 'every clip is in the grid, with the screenshots')
+    assert.equal(await page.getByRole('button', { name: /^Open .* screenshot/ }).count(), 2, 'screenshots are listed among every clip')
+    assert.ok((await page.locator('.library-toolbar').innerText()).includes('22 clips, 2 screenshots'), 'and counted apart')
 
     // A game's picture that fails to load leaves the game's initial, and
     // loads on the next listing (here: coming back to the window).
@@ -472,11 +516,11 @@ async function runScenario(scenario, browser) {
     await shot('search-none')
     await page.getByRole('button', { name: 'Clear search', exact: true }).last().click()
     await page.waitForTimeout(100)
-    assert.equal(await cards(), 22, 'clearing the search lists every clip again')
+    assert.equal(await cards(), 24, 'clearing the search lists every clip (and screenshot) again')
     await page.getByLabel('Search clips').fill('malenia')
     await page.keyboard.press('Escape')
     await page.waitForTimeout(100)
-    assert.equal(await cards(), 22, 'Esc clears the search')
+    assert.equal(await cards(), 24, 'Esc clears the search')
 
     // Display preferences share a menu; the resting toolbar stays focused on finding clips.
     await page.getByRole('button', { name: 'View options' }).click()
@@ -513,7 +557,8 @@ async function runScenario(scenario, browser) {
     const titles = await page.locator('.clip-grid .card-title').allTextContents()
     assert.ok(titles.includes('Elden Ring') && !titles.includes('ELDEN RING'), `an untitled clip is titled by its game, in natural case: ${titles.slice(0, 3)}`)
     assert.ok(!titles.some((t) => /^Clip ·/.test(t)), 'no card is titled "Clip · time"')
-    assert.match(await page.locator('.clip-grid .frame span').first().innerText(), /^\d+:\d\d$/, 'the length is on the picture')
+    // (The newest item is a screenshot now that they sit among every clip.)
+    assert.match(await page.locator('.clip-grid .card .frame span').first().innerText(), /^\d+:\d\d$/, 'the length is on the picture')
 
     // A game filter lists its clips, and a card there doesn't say the game again.
     await selectGame(page, 'Hades II')
@@ -554,6 +599,11 @@ async function runScenario(scenario, browser) {
     assert.equal(await gameChoice(page, 'Elden Ring').getAttribute('aria-current'), 'page', "and stays on the game's clips")
     assert.match(await page.evaluate(() => document.activeElement.getAttribute('aria-label') ?? ''), /^Open Elden Ring screenshot/, 'focus is back on the card it was opened from')
     await page.screenshot({ path: path.join(out, 'game-screenshots.png') })
+    // Copied from its card, a screenshot says so there, as a clip does.
+    const shotCard = page.locator('.screenshot-card').first()
+    await shotCard.hover()
+    await shotCard.getByRole('button', { name: 'Copy screenshot', exact: true }).click()
+    await shotCard.getByRole('button', { name: 'Copy screenshot', exact: true }).filter({ hasText: 'Copied' }).waitFor()
     await cardAction(page, page.locator('.clip-grid > *').filter({ has: page.getByRole('button', { name: /^Open Elden Ring screenshot/ }) }).first(), 'Delete', true)
     await page.getByText('Screenshot deleted').waitFor()
     assert.equal(await shots.count(), 1, 'a deleted screenshot vanishes at once')
@@ -634,6 +684,7 @@ async function runScenario(scenario, browser) {
   assert.equal(await page.evaluate(() => [...document.querySelectorAll('.clip-open')].indexOf(document.activeElement)), 1, 'Right moves to the next card')
 
   await quickCopy(page)
+  await cardKeys(page)
 
   // Selection, bulk delete, undo.
   await choose(page, 'Library actions', 'Select clips')
@@ -656,8 +707,8 @@ async function runScenario(scenario, browser) {
   await page.waitForTimeout(200)
   assert.equal(await cards(), before, 'undo brings the clips back')
   // Ctrl-click starts picking without the menu; Shift-click takes the range; Esc ends it.
-  await page.locator('.clip-open').first().click({ modifiers: ['Control'] })
-  await page.locator('.clip-open').nth(2).click({ modifiers: ['Shift'] })
+  await page.locator('.card .clip-open').first().click({ modifiers: ['Control'] })
+  await page.locator('.card .clip-open').nth(2).click({ modifiers: ['Shift'] })
   assert.match(await strip.innerText(), /3 selected/, 'Ctrl-click then Shift-click picks the range')
   await page.keyboard.press('Escape')
   assert.equal(await strip.count(), 0, 'Esc stops selecting')
@@ -947,7 +998,8 @@ async function runScenario(scenario, browser) {
   // A single capture command remains available without live counters in the library.
   const capture = page.getByRole('region', { name: 'Capture', exact: true })
   await capture.getByText('Elden Ring', { exact: true }).waitFor()
-  await capture.getByRole('status').getByText('Clipping', { exact: true }).waitFor()
+  assert.match(await capture.getByRole('status').textContent(), /^Clipping Elden Ring/, 'the capture status is announced')
+  assert.equal(await capture.locator('.split').evaluate((el) => Math.round(el.getBoundingClientRect().height)), 44, 'one compact capture control')
   assert.equal(await capture.getByText(/\d+s ready/).count(), 0, 'there is no live buffer counter')
   assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), true, 'Save clip works while a game records')
   assert.equal(await capture.getByText(/not a game/i).count(), 0, '"not a game" is not shown beside the game')
@@ -956,7 +1008,9 @@ async function runScenario(scenario, browser) {
   await fire('status-changed', { ...data.get_status, session_start_ms: null, buffered_seconds: 0 })
   assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), false, 'an empty replay buffer cannot be saved')
   await fire('status-changed', { ...data.get_status, state: 'waiting', game: null, session_start_ms: null, buffered_seconds: 0 })
-  assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), false, 'Save clip stays disabled while waiting for a game')
+  await capture.locator('.line', { hasText: 'Waiting for a game' }).waitFor()
+  assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).count(), 0, 'no dead Save clip button while waiting for a game')
+  assert.equal(await capture.getByRole('button', { name: 'Capture options', exact: true }).count(), 1, 'its options stay reachable')
   await fire('status-changed', data.get_status)
   assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).isEnabled(), true, 'an available replay enables Save clip again')
   await choose(page, 'Capture options', 'Elden Ring is not a game')
@@ -1023,7 +1077,7 @@ async function runScenario(scenario, browser) {
   await page.getByRole('button', { name: 'Back to clips' }).click()
   // Capture failing mid-game: the strip says so instead of "waiting".
   await fire('status-changed', { state: 'retrying', game: 'Overwatch', steam_app_id: null, session_start_ms: Date.now(), buffered_seconds: 0, replay_seconds: 30, encoder: 'nvd3d11h264enc', capture_path: null, error: 'Could not encode stream: Failed to open session', backend: 'windows', needs_screen: false, hdr: null, hdr_tonemapped: false })
-  await capture.getByText('Capture interrupted', { exact: true }).waitFor()
+  await capture.locator('.line', { hasText: 'Capture interrupted' }).waitFor()
   await capture.getByText('Retrying…', { exact: true }).waitFor()
   assert.equal(await page.getByText('Waiting for a game').count(), 0, 'no "waiting" while a game is failing')
   assert.equal(await capture.getByRole('button', { name: 'Save clip', exact: true }).count(), 0, 'no Save replay while nothing records')
@@ -1031,6 +1085,7 @@ async function runScenario(scenario, browser) {
   // NVENC refused at the game's start: AMD records it, and the strip says so.
   await fire('status-changed', { state: 'recording', game: 'Fortnite', steam_app_id: null, session_start_ms: Date.now(), buffered_seconds: 30, replay_seconds: 30, encoder: 'amfh264enc', encoder_fallback: { preferred: 'nvenc', using: 'amf', reason: 'Failed to open session', set_aside: false }, capture_path: 'zerocopy', error: null, backend: 'windows', needs_screen: false, hdr: null, hdr_tonemapped: false })
   await capture.getByText('Fortnite', { exact: true }).waitFor()
+  await capture.getByText('· AMF', { exact: true }).waitFor()
   await page.getByRole('button', { name: 'Capture options', exact: true }).click()
   const why = await page.getByRole('menu', { name: 'Capture options' }).innerText()
   assert.ok(why.includes('NVIDIA NVENC') && why.includes('Failed to open session'), `fallback says why: ${why}`)
@@ -1048,6 +1103,7 @@ async function runScenario(scenario, browser) {
   await fire('status-changed', { state: 'recording', game: 'Fortnite', steam_app_id: null, session_start_ms: Date.now(), buffered_seconds: 30, replay_seconds: 30, encoder: 'nvd3d11h264enc', encoder_fallback: null, capture_path: 'zerocopy', error: null, backend: 'windows', needs_screen: false, hdr: null, hdr_tonemapped: false })
   await page.getByRole('button', { name: 'Capture options', exact: true }).click()
   assert.ok(!(await page.getByRole('menu', { name: 'Capture options' }).innerText()).includes('AMD AMF'), 'the usual encoder has no fallback note')
+  assert.equal(await capture.getByText(/AMD AMF/).count(), 0, 'and the control names no encoder')
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await settingsPage('Audio').click()
@@ -1235,13 +1291,13 @@ async function uxScenario(browser) {
 
   // Two deletes, then a plain toast: Undo stays and brings both back.
   for (let i = 0; i < 2; i++) {
-    const card = page.locator('.clip-grid > *').first()
+    const card = page.locator('.clip-grid > .card').first()
     await card.hover()
     await cardAction(page, card, 'Delete')
     await page.waitForTimeout(150)
   }
   assert.equal(await cards(), before - 2, 'two clips deleted')
-  const card = page.locator('.clip-grid > *').first()
+  const card = page.locator('.clip-grid > .card').first()
   await card.hover()
   await card.getByRole('button', { name: 'Copy clip', exact: true }).click()
   await page.waitForTimeout(150)
@@ -1397,6 +1453,14 @@ async function worstScenario(browser) {
   await page.goto(`http://localhost:${PORT}/`)
   await page.locator('.clip-grid > *').first().waitFor()
   const shot = (name) => page.screenshot({ path: path.join(out, `worst-${name}.png`) })
+  // A long games list scrolls under All clips and Favorites, which stay put.
+  const allClips = page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name: 'All clips', exact: true })
+  const pinned = await allClips.boundingBox()
+  const games = page.locator('.games-scroll')
+  assert.ok(await games.evaluate((el) => el.scrollHeight > el.clientHeight), 'the games list overflows at 900x600')
+  await games.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  assert.deepEqual(await allClips.boundingBox(), pinned, 'All clips stays in place while the games scroll')
+  await games.evaluate((el) => el.scrollTo(0, 0))
   // Everything that can be pressed or read in the bars is inside the
   // window, and no two of a bar's controls overlap.
   const fits = async (where) => {
@@ -1518,7 +1582,7 @@ async function worstScenario(browser) {
   }
   // The clip with no sound, no picture and no length: no audio lane, no levels, no NaN.
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: /^Open/ }).first().click()
+  await page.getByRole('button', { name: /^Open .* clip from / }).first().click()
   await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
   await page.waitForTimeout(300)
   await shot('studio-silent')

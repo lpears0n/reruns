@@ -73,6 +73,10 @@
     place = { left, top }
     // Hidden until placed, and nothing hidden takes focus: wait for it to show.
     await tick()
+    // In from its trigger's side: 4 px and a fade (a fade alone when motion is reduced).
+    const rise = point || top >= from.bottom ? -4 : 4
+    const still = document.documentElement.hasAttribute('data-reduce-motion')
+    panel.animate(still ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, translate: `0 ${rise}px` }, { opacity: 1, translate: '0 0' }], { duration: 120, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' })
     // The panel is already placed inside the viewport. Native focus scrolling
     // can still move the underlying library and immediately dismiss its menu.
     ;(menu ? rows()[0] : (panel.querySelector<HTMLElement>('[autofocus], [tabindex="0"], button, input, select') ?? panel))?.focus({ preventScroll: true })
@@ -176,9 +180,5 @@
     max-height: calc(100vh - 16px);
     overflow-y: auto;
     outline: none;
-    transition: opacity var(--duration-fast) ease-out;
-    @starting-style {
-      opacity: 0;
-    }
   }
 </style>

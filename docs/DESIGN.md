@@ -29,39 +29,59 @@ type. Do not introduce another logo concept or arbitrary accent colour.
 ## Composition
 
 `LibraryNav.svelte` owns the 228px collection sidebar: identity, All clips,
-Favorites, game covers/names, capture and Settings. Games scroll independently
-when the window is short; capture remains reachable. Broken game covers fall
-back to an actual clip frame, then an initial.
+Favorites, game covers/names, capture and Settings. All clips and Favorites
+stay fixed; only the games list scrolls, with the app's own scrollbar (never
+`scrollbar-width`, which swaps in the system one). A hairline ends the list
+above capture and Settings, which line up with the navigation rows. Broken
+game covers fall back to an actual clip frame, then an initial.
 
 `ClipsView.svelte` owns one page header: current collection, count, search,
 View and occasional library actions. A game selection can narrow Favorites.
 The collection being browsed is distinct from the game named in capture.
+Choosing another collection starts at its newest clips. Sort and grouping
+are remembered between launches. An empty library shows no count or View.
 
-Clips are grouped by day by default. Session grouping remains an explicit
-View option. Routine browsing does not show playtime totals, capture LEDs,
+Clips are grouped by day by default, with screenshots among them by time
+(their game's when one is chosen; never in Favorites). Session grouping
+remains an explicit View option. Routine browsing does not show playtime totals, capture LEDs,
 buffer meters, or readiness counters. Selection actions appear only during
 selection.
 
 `CaptureControl.svelte` is one compact command beneath the collections.
-It names the game being clipped and offers **Save clip** with the configured
-shortcut. Availability follows actual recorder state without displaying its
-buffer telemetry. Waiting and failures are described when relevant; full
-diagnostics and recording settings remain in Capture options.
+While a game records it is a single 44px raised control in two parts:
+**Save clip** over the game's name, the shortcut at the right when it is
+short, and a joined ⋯ for Capture options. "Save clip", "Saving…" and
+"Saved ✓" share one cell, so the control never changes width. When the
+encoder fell back, the game line names what records instead (· CPU, · AMF).
+Otherwise there is no dead button: one quiet line says "Waiting for a game"
+(with the shortcut), "Capture interrupted / Retrying…", or "Capture
+unavailable" in the error colour with the first clause of the reason.
+Availability follows actual recorder state without displaying its buffer
+telemetry; full diagnostics and recording settings remain in the options.
 
 ## Media and feedback
 
 Clip and screenshot cards use the same measured frame/caption geometry.
-The image opens the item. Title, game and timestamp retain stable positions.
-Copy and More are on the image, revealed on pointer hover or keyboard focus,
-and always available on touch. Do not move or scale the card to reveal them.
+The image opens the item. The time always ends the first line, so a row's
+times line up; the second line holds the game (when the title is not it),
+Trimmed, and marked moments. Copy and More are on the image, revealed on
+pointer hover or keyboard focus, and always available on touch. Do not move
+or scale the card to reveal them. Copy reads Copy, then Copied, in the same
+width; while a large clip is prepared its foot line fills with the progress
+and the notice carries Cancel. Screenshots get the same Copied.
+
+Each card is one tab stop. Arrow keys move between cards; on a focused card
+Ctrl+C copies, Delete deletes (focus moves to the neighbour) and F toggles the
+favorite. The card's menu (right-click, Menu key) names these keys. Ctrl+Z
+takes back the delete or ignored game that the notice offers.
 
 The preview opens with playback, Copy and optional Trim. Preserve trim edits
 when the controls close, source-safe retries, cancellation and fullscreen.
 The library and viewers use neutral backgrounds without sampled colour
 halos. Footage supplies the colour.
 
-Saved feedback contains the actual frame when available, concise metadata,
-Copy and Open. A transient notification has tight corners and no decorative
+Saved feedback, for clips and screenshots alike, contains the actual frame
+when available, concise metadata, Copy and Open. A transient notification has tight corners and no decorative
 status dot or placeholder symbol. Progress is shown only for actual work.
 Keep Cancel and deletion Undo reachable, including when both operations
 overlap. Pause saved-notification expiry during hover or keyboard interaction.
@@ -69,6 +89,29 @@ Long error text scrolls without pushing its actions outside the window.
 
 The empty library gives one instruction and the setup action it needs.
 Do not display a setup checklist, full folder paths, or reassuring slogans.
+
+## Motion
+
+Motion says one of two things: time was captured, or a clip moved. The 2px
+line at the foot of a frame means time: it follows the pointer when
+scrubbing, fills while a copy is prepared, and runs once across a clip that
+arrived. Everything else is opacity or colour.
+
+- **Arrival:** clips saved while the window was hidden or unfocused come in
+  when it is in front again (and at once when saved from the window): the
+  frame fades in over 160ms, then the foot line sweeps across in 200ms,
+  holds about a second and fades. At most four cards; the pointer stops it.
+- **Card and player:** the picture flies to the player in 200ms and back in
+  180ms with the frame's 4px corners; the card it lands on rings for 700ms
+  and fades over 180ms. Esc during the flight drops it.
+- **Feedback:** Save clip crossfades to Saved for 1.2s; notices rise 8px in
+  180ms and leave with a 4px drop in 120ms; menus come 4px from their
+  trigger in 120ms and close at once; pressed rows and tools step one shade.
+
+Budget: routine motion 200ms or less, transform and opacity only (the
+flight's single ghost excepted), no loops, nothing on every card at once.
+Reduced motion (system or Appearance) keeps every state change but nothing
+travels: arrivals ring the card instead.
 
 ## Surfaces and type
 

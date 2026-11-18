@@ -6,6 +6,7 @@
   the same filters and the same scroll position.
 -->
 <script lang="ts">
+  import { tick } from 'svelte'
   import { Check, Ellipsis, Search, SlidersHorizontal, Trash2, X } from '@lucide/svelte'
   import { type Clip, type GameEntry, type Screenshot, type Settings, type Status } from './api'
   import { bytes } from './format'
@@ -14,13 +15,13 @@
   import FirstRun from './FirstRun.svelte'
   import { date, dayKey, dayLabel, gameName } from './format'
   import Popover from './Popover.svelte'
-  import { prefs, setPrefs, type ThumbSize } from './prefs.svelte'
-  import type { Scope } from './Rail.svelte'
+  import { prefs, setPrefs, type Sort, type ThumbSize } from './prefs.svelte'
+  import type { Scope } from './types'
   import ScreenshotCard from './ScreenshotCard.svelte'
   import type { Category } from './SettingsView.svelte'
   import SkeletonGrid from './SkeletonGrid.svelte'
   import StateMessage from './StateMessage.svelte'
-  import type { Selection } from './StatusBar.svelte'
+  import type { Selection } from './types'
   import VirtualGrid from './VirtualGrid.svelte'
 
   let {
@@ -36,6 +37,7 @@
     settings,
     copyingPath = null,
     copiedPath = null,
+    copyProgress = null,
     copyBlocked = false,
     onopen,
     onshot,
@@ -64,6 +66,8 @@
     settings: Settings | null
     copyingPath?: string | null
     copiedPath?: string | null
+    /** How far a large clip's copy has been prepared, 0 to 1; null when not preparing. */
+    copyProgress?: number | null
     copyBlocked?: boolean
     /** `queue`: the clips as listed, for stepping to the next one. */
     onopen: (c: Clip, queue: string[]) => void
@@ -82,7 +86,6 @@
     onsettings: (c: Category) => void
   } = $props()
 
-  type Sort = 'newest' | 'oldest' | 'longest' | 'largest'
   const SORTS: { value: Sort; label: string }[] = [
     { value: 'newest', label: 'Newest first' },
     { value: 'oldest', label: 'Oldest first' },
@@ -102,7 +105,8 @@
   let query = $state('')
   let search: HTMLInputElement | undefined = $state()
   let label = $state('')
-  let sort = $state<Sort>('newest')
+  /** Order and grouping are kept between launches (prefs). */
+  const sort = $derived(prefs.sort)
 
   // Selection mode for bulk actions.
   let selecting = $state(false)
@@ -139,13 +143,14 @@
   // out drops from the count without anything having to tidy the set.
   const selectedClips = $derived(shown.filter((c) => selected.has(c.path)))
 
-  // A game's screenshots sit among its clips by time, unless a filter or a
+  // Screenshots sit among the clips by time (their game's, when one is
+  // chosen; never in Favorites), unless a filter or a
   // sort by something else has narrowed the list to clips.
   const byDay = $derived(sort === 'newest' || sort === 'oldest')
-  const shots = $derived(game && scope !== 'starred' ? screenshots.filter((s) => s.game === game.name) : [])
+  const shots = $derived(scope !== 'starred' ? screenshots.filter((s) => !game || s.game === game.name) : [])
   /** A game's clips: by the play session they were saved in (the default),
    *  or by day as everywhere else. */
-  let grouping = $state<'session' | 'day'>('day')
+  const grouping = $derived(prefs.grouping)
   type Item = { at: number } & ({ clip: Clip } | { shot: Screenshot })
   type Section = { key: string; label: string; range?: string; played: number; live?: boolean; items: Item[] }
   const path = (it: Item) => ('clip' in it ? it.clip.path : it.shot.path)
@@ -170,8 +175,6 @@
     }
     return days
   })
-
-  const capsules = $derived(new Map(games.map((g) => [g.name, g.art.capsule])))
 
   /** What the header says is listed, including screenshots when visible. */
   const listed = $derived(game ? gameName(game.name) : scope === 'starred' ? 'Favorites' : 'All clips')
@@ -251,8 +254,39 @@
     best?.focus()
   }
 
+  /** The listed item a card's open button belongs to. */
+  function itemOf(el: HTMLElement): Item | undefined {
+    const at = el.closest<HTMLElement>('[data-clip-path]')?.dataset.clipPath
+    return at ? sections.flatMap((s) => s.items).find((it) => path(it) === at) : undefined
+  }
+
+  const itemPath = (it: Item) => ('clip' in it ? it.clip : it.shot)
+
+  /** Delete one card; the keyboard moves on to its neighbour rather than
+   *  falling back to the top of the window. */
+  async function removeItem(it: Item) {
+    const order = sections.flatMap((s) => s.items)
+    // By path: the context menu's target is a reactive copy of the item.
+    const i = order.findIndex((x) => path(x) === path(it))
+    const next = order[i + 1] ?? order[i - 1]
+    const keyboard = !!document.activeElement?.closest('[data-clip-path], [role="menu"]')
+    ondelete(itemPath(it))
+    if (!next || !keyboard) return
+    await tick()
+    document.querySelector<HTMLElement>(`[data-clip-path="${CSS.escape(path(next))}"] .clip-open`)?.focus()
+  }
+
+  // A different collection starts at its newest clips, not at the offset
+  // the last one was scrolled to. Returning from a clip or Settings keeps it.
+  let scroller: HTMLDivElement | undefined = $state()
+  const collection = $derived(`${scope}/${game?.name ?? ''}`)
+  $effect(() => {
+    void collection
+    if (scroller) scroller.scrollTop = 0
+  })
+
   function onkeydown(e: KeyboardEvent) {
-    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement
+    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement
     if (behind) return
     if (search && (((e.ctrlKey || e.metaKey) && e.key === 'f') || (e.key === '/' && !typing))) {
       e.preventDefault()
@@ -261,6 +295,23 @@
       return
     }
     if (typing) return
+    // A focused card's own keys: copy, delete, favorite (as in its menu).
+    const card = !selecting && e.target instanceof HTMLElement && e.target.classList.contains('clip-open') ? itemOf(e.target) : undefined
+    if (card && !e.altKey && !e.shiftKey) {
+      const ctrl = e.ctrlKey || e.metaKey
+      if (ctrl && e.code === 'KeyC') {
+        e.preventDefault()
+        return oncopy(itemPath(card))
+      }
+      if (!ctrl && e.key === 'Delete') {
+        e.preventDefault()
+        return void removeItem(card)
+      }
+      if (!ctrl && (e.key === 'f' || e.key === 'F') && 'clip' in card) {
+        e.preventDefault()
+        return onfavorite(card.clip)
+      }
+    }
     if (e.key.startsWith('Arrow') && e.target instanceof HTMLElement && e.target.classList.contains('clip-open')) {
       e.preventDefault()
       moveFocus(e.target, e.key)
@@ -288,7 +339,7 @@
 <header class="library-toolbar">
   <div class="library-heading">
     <h1 title={listed}>{listed}</h1>
-    <p class="library-count">{scope === 'starred' && game ? 'Favorites · ' : ''}{count}{visibleShots ? `, ${visibleShots} screenshots` : ''}</p>
+    {#if scoped.length || shots.length}<p class="library-count">{scope === 'starred' && game ? 'Favorites · ' : ''}{count}{visibleShots ? `, ${visibleShots} screenshot${visibleShots === 1 ? '' : 's'}` : ''}</p>{/if}
   </div>
 
   {#if scoped.length || shots.length}
@@ -321,6 +372,7 @@
     {/if}
   {/if}
 
+  {#if scoped.length || shots.length}
   <Popover label="View options">
     {#snippet trigger(props)}
       <button {...props} class="view-button press" aria-label="View options" title="View options">
@@ -330,7 +382,7 @@
     <div role="group" aria-label="Sort clips">
       <div class="menu-label">Sort</div>
       {#each SORTS as s (s.value)}
-        {@render radio(sort === s.value, s.label, () => (sort = s.value))}
+        {@render radio(sort === s.value, s.label, () => setPrefs({ sort: s.value }))}
       {/each}
     </div>
     <div class="menu-rule"></div>
@@ -344,8 +396,8 @@
       <div class="menu-rule"></div>
       <div role="group" aria-label="Group clips">
         <div class="menu-label">Group</div>
-        {@render radio(grouping === 'session', 'By play session', () => (grouping = 'session'))}
-        {@render radio(grouping === 'day', 'By day', () => (grouping = 'day'))}
+        {@render radio(grouping === 'session', 'By play session', () => setPrefs({ grouping: 'session' }))}
+        {@render radio(grouping === 'day', 'By day', () => setPrefs({ grouping: 'day' }))}
       </div>
     {/if}
     {#if labels.length}
@@ -359,6 +411,7 @@
       </div>
     {/if}
   </Popover>
+  {/if}
 
   <Popover label="Library actions">
     {#snippet trigger(props)}
@@ -387,10 +440,10 @@
   </div>
 {/if}
 
-<div class="library-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-8 pt-1 pb-4">
+<div bind:this={scroller} class="library-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-8 pt-1 pb-4">
   {#if scoped.length || shots.length}
     {#if sections.length}
-      <VirtualGrid {sections} key={path} {minWidth} {maxWidth} head={48}>
+      <VirtualGrid {sections} key={path} {minWidth} {maxWidth}>
         {#snippet heading(day)}
           {#if day.range !== undefined}
             <!-- A play session, from the recorder's log: when, and for how long. -->
@@ -410,12 +463,12 @@
             <ClipCard
               {clip}
               showGame={!game}
-              box={game ? null : capsules.get(clip.game)}
               dated={!byDay}
               selectable={selecting}
               selected={selected.has(clip.path)}
               copying={copyingPath === clip.path}
               copied={copiedPath === clip.path}
+              copyProgress={copyingPath === clip.path ? copyProgress : null}
               {copyBlocked}
               onopen={() => onopen(clip, shown.map((c) => c.path))}
               ondelete={() => ondelete(clip)}
@@ -426,7 +479,7 @@
             />
           {:else}
             {@const shot = it.shot}
-            <ScreenshotCard {shot} {copyBlocked} showGame={!game} onopen={() => onshot(shot)} ondelete={() => ondelete(shot)} oncopy={() => oncopy(shot)} onmenu={(x, y) => menuFor(it, x, y)} />
+            <ScreenshotCard {shot} selecting={selecting} {copyBlocked} copying={copyingPath === shot.path} copied={copiedPath === shot.path} showGame={!game} onopen={() => onshot(shot)} ondelete={() => ondelete(shot)} oncopy={() => oncopy(shot)} onmenu={(x, y) => menuFor(it, x, y)} />
           {/if}
         {/snippet}
       </VirtualGrid>
@@ -450,7 +503,7 @@
   {:else if game}
     <StateMessage title="No clips from {gameName(game.name)} yet" body="Press {hotkey} while playing to save the last {settings?.replay_seconds ?? 30} seconds." />
   {:else}
-    <FirstRun {hotkey} {status} {settings} {onchoosescreen} {onsettings} />
+    <FirstRun {hotkey} {status} {onchoosescreen} {onsettings} />
   {/if}
 </div>
 
@@ -459,19 +512,19 @@
   {#if target && 'clip' in target}
     {@const clip = target.clip}
     <button class="menu-item" role="menuitem" onclick={() => onopen(clip, shown.map((c) => c.path))}>Open</button>
-    <button class="menu-item" role="menuitem" disabled={copyBlocked} onclick={() => oncopy(clip)}>Copy clip</button>
-    <button class="menu-item" role="menuitem" onclick={() => onfavorite(clip)}>{clip.favorite ? 'Remove from favorites' : 'Add to favorites'}</button>
+    <button class="menu-item" role="menuitem" disabled={copyBlocked} onclick={() => oncopy(clip)} aria-keyshortcuts="Control+C">Copy clip<span class="menu-key" aria-hidden="true">Ctrl+C</span></button>
+    <button class="menu-item" role="menuitem" onclick={() => onfavorite(clip)} aria-keyshortcuts="F">{clip.favorite ? 'Remove from favorites' : 'Add to favorites'}<span class="menu-key" aria-hidden="true">F</span></button>
     <button class="menu-item" role="menuitem" onclick={() => onreveal(clip)}>Show in folder</button>
     <button class="menu-item" role="menuitem" onclick={() => toggle(clip)}>{selected.has(clip.path) ? 'Deselect' : 'Select'}</button>
     <div class="menu-rule"></div>
-    <button class="menu-item text-danger" role="menuitem" onclick={() => ondelete(clip)}>Delete</button>
+    <button class="menu-item text-danger" role="menuitem" onclick={() => target && removeItem(target)} aria-keyshortcuts="Delete">Delete<span class="menu-key" aria-hidden="true">Del</span></button>
   {:else if target}
     {@const shot = target.shot}
     <button class="menu-item" role="menuitem" onclick={() => onshot(shot)}>Open</button>
-    <button class="menu-item" role="menuitem" disabled={copyBlocked} onclick={() => oncopy(shot)}>Copy screenshot</button>
+    <button class="menu-item" role="menuitem" disabled={copyBlocked} onclick={() => oncopy(shot)} aria-keyshortcuts="Control+C">Copy screenshot<span class="menu-key" aria-hidden="true">Ctrl+C</span></button>
     <button class="menu-item" role="menuitem" onclick={() => onreveal(shot)}>Show in folder</button>
     <div class="menu-rule"></div>
-    <button class="menu-item text-danger" role="menuitem" onclick={() => ondelete(shot)}>Delete</button>
+    <button class="menu-item text-danger" role="menuitem" onclick={() => target && removeItem(target)} aria-keyshortcuts="Delete">Delete<span class="menu-key" aria-hidden="true">Del</span></button>
   {/if}
 </Popover>
 
@@ -483,11 +536,12 @@
   .search-field { width: 204px; min-width: 136px; flex: 0 1 204px; background: transparent; border-color: var(--color-line); }
   .view-button { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 7px; height: 36px; padding: 0 8px; border-radius: 2px; color: var(--color-fg-2); font-size: 13px; white-space: nowrap; }
   .view-button:hover, .view-button[aria-expanded='true'] { background: var(--color-chrome); color: var(--color-fg); }
+  .view-button:active { background: var(--color-hover); transition-duration: 0s; }
   .menu-label { padding: 6px 10px 4px 36px; color: var(--color-muted); font-size: 12px; line-height: 18px; }
   .active-tag { min-width: 0; max-width: 100px; }
   .library-scroll { position: relative; scrollbar-gutter: stable; }
   .section-heading { max-width: 100%; }
-  .section-heading :global(h2) { font-size: 13px; line-height: 20px; font-weight: 500; color: var(--color-fg-2); }
+  .section-heading :global(h2) { font-size: 13px; line-height: 20px; font-weight: 600; color: var(--color-fg); }
   .selection-toolbar { display: flex; flex: none; align-items: center; gap: 12px; min-height: 44px; padding: 6px 32px; background: var(--color-chrome); font-size: 13px; }
   .selection-summary { display: flex; min-width: 0; flex: 1; align-items: center; gap: 12px; }
   @media (max-width: 1100px) {

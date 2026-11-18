@@ -10,6 +10,7 @@
     type ClipPatch,
     type GameEntry,
     initMedia,
+    thumbUrl,
     onClipSaved,
     onScreenshotSaved,
     onMarked,
@@ -32,12 +33,14 @@
   import CaptureNotice from './lib/CaptureNotice.svelte'
   import LibraryNav from './lib/LibraryNav.svelte'
   import { coalesce } from './lib/coalesce'
+  import { arrive, ring } from './lib/continuity'
+  import { gameName as gameLabel } from './lib/format'
   import ClipStudio, { type Edit } from './lib/ClipStudio.svelte'
   import { applyPrefs, prefs } from './lib/prefs.svelte'
   import SettingsView, { type Category } from './lib/SettingsView.svelte'
-  import { type Scope } from './lib/Rail.svelte'
+  import type { Scope } from './lib/types'
   import StateMessage from './lib/StateMessage.svelte'
-  import { type Notice } from './lib/StatusBar.svelte'
+  import type { Notice } from './lib/types'
   import ScreenshotViewer from './lib/ScreenshotViewer.svelte'
   import UpdatePrompt, { skippedUpdate } from './lib/UpdatePrompt.svelte'
   import WindowControls from './lib/WindowControls.svelte'
@@ -102,7 +105,24 @@
   let copiedTimer: ReturnType<typeof setTimeout>
   let dragging = $state(false)
   let saving = $state(false)
+  /** Clips to bring in once the window is in front again: saved since it
+   *  was hidden (`arriveAfter`), or saved while it wasn't focused. */
+  const pendingArrivals = new Set<string>()
+  let hiddenAt = 0
+  let arriveAfter = 0
+
+  function landArrivals() {
+    if (document.visibilityState !== 'visible' || !document.hasFocus() || covered || view !== 'library') return
+    const paths = new Set(pendingArrivals)
+    if (arriveAfter) for (const c of allClips) if (c.created_ms > arriveAfter && !c.is_edit) paths.add(c.path)
+    pendingArrivals.clear()
+    arriveAfter = 0
+    if (paths.size) tick().then(() => arrive([...paths]))
+  }
+
+  /** A clip from the game was just saved: Save clip says Saved for a moment. */
   let flash = $state(false)
+  let flashTimer: ReturnType<typeof setTimeout>
   let toast = $state<Notice | null>(null)
   let toastTimer: ReturnType<typeof setTimeout>
   let toastDeadline = 0
@@ -114,14 +134,15 @@
   // Raw state: entries are compared by identity when undone or committed,
   // which a deep proxy would break. The array is always reassigned.
   let pending = $state.raw<{ clips: (Clip | Screenshot)[]; timer: ReturnType<typeof setTimeout> }[]>([])
+  const copyingGame = $derived(allClips.find((c) => c.path === copyingPath)?.game)
   const workNotice = $derived<Notice | null>(copyingPath ? {
     text: copyPhase === 'cancelling' ? 'Cancelling…' : copyPhase === 'preparing' ? `Preparing clip… ${Math.round(renderProgress * 100)}%` : 'Copying…',
     persistent: true,
     progress: copyPhase === 'preparing' ? renderProgress : undefined,
-    detail: allClips.find((c) => c.path === copyingPath)?.game,
+    detail: copyingGame ? gameLabel(copyingGame) : undefined,
     action: copyPhase === 'preparing' ? { label: 'Cancel', run: cancelWork } : undefined,
     // An export must not hide a deletion's time-limited way back.
-    secondaryAction: toast?.action?.label === 'Undo' ? { label: pending.length ? 'Undo delete' : 'Undo', run: toast.action.run } : undefined,
+    secondaryAction: toast?.action?.label === 'Undo' ? { label: pending.length ? 'Undo delete' : 'Undo', run: toast.action.run, key: 'Ctrl+Z' } : undefined,
   } : toast)
   const displayNotice = $derived.by(() => {
     const saved = workNotice?.media?.path && allClips.find((c) => c.path === workNotice.media?.path)
@@ -159,12 +180,20 @@
     copyPhase = 'copying'
     try {
       await api.copyClip(c.path)
+      markCopied(c.path)
       notify('Screenshot copied')
     } catch (e) {
       notify(sentence(e), true)
     } finally {
       copyingPath = null
     }
+  }
+
+  /** The card (or viewer) that was copied says Copied for a moment. */
+  function markCopied(path: string) {
+    copiedPath = path
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copiedPath = null), 1600)
   }
 
   function notify(text: string, error = false) {
@@ -280,6 +309,7 @@
       retryFailedArt()
       libraryError = null
       writeLibraryCache(allClips, games)
+      landArrivals()
     } catch (e) {
       libraryError = String(e)
     } finally {
@@ -417,9 +447,7 @@
       copyPhase = 'copying'
       try {
         await api.copyClip(path)
-        copiedPath = clip.path
-        clearTimeout(copiedTimer)
-        copiedTimer = setTimeout(() => (copiedPath = null), 1600)
+        markCopied(clip.path)
         notify(!asIs && maxMb !== null ? `Clip copied, under ${maxMb} MB` : 'Clip copied')
       } catch (e) {
         failed("Couldn't copy the clip", String(e).replace(/^couldn't copy the clip: /, ''), retry)
@@ -475,13 +503,23 @@
     const n = pending.reduce((sum, p) => sum + p.clips.length, 0)
     const one = list[0]
     const label = n > 1 ? `Deleted ${n} clips` : 'title' in one ? (one.title ? `Deleted “${one.title}”` : 'Clip deleted') : 'Screenshot deleted'
-    showToast({ text: label, action: { label: 'Undo', run: undo } }, UNDO_MS)
+    showToast({ text: label, action: { label: 'Undo', run: undo, key: 'Ctrl+Z' } }, UNDO_MS)
   }
 
-  function undo() {
+  async function undo() {
     for (const p of pending) clearTimeout(p.timer)
+    const back = pending.flatMap((p) => p.clips.map((c) => c.path))
     pending = []
     closeToast()
+    // The restored cards are where they were: show where, and give the first
+    // the keyboard if the library had it.
+    await tick()
+    const first = back.map((p) => document.querySelector<HTMLElement>(`[data-clip-path="${CSS.escape(p)}"]`)).find(Boolean)
+    if (!first) return
+    first.scrollIntoView({ block: 'nearest' })
+    const active = document.activeElement
+    if (!covered && (active === document.body || active?.closest('main'))) first.querySelector<HTMLElement>('.clip-open')?.focus({ preventScroll: true })
+    for (const p of back) ring(p)
   }
 
   async function commit(entry: (typeof pending)[number]) {
@@ -547,7 +585,7 @@
       closeToast()
       if (settings) changeSettings({ ...settings, ignored_games: before }).catch((e) => notify(String(e), true))
     }
-    showToast({ text: `Ignoring ${name}`, action: { label: 'Undo', run } }, UNDO_MS)
+    showToast({ text: `Ignoring ${name}`, action: { label: 'Undo', run, key: 'Ctrl+Z' } }, UNDO_MS)
   }
 
   /** From a game's clips: hide it and never detect it again. */
@@ -590,7 +628,14 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement
+    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement || (e.target instanceof HTMLElement && e.target.isContentEditable)
+    // Undo over confirm, from the keyboard too: Ctrl+Z takes back the
+    // delete (or the ignored game) the notice offers.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyZ' && !typing && toast?.action?.label === 'Undo') {
+      e.preventDefault()
+      toast.action.run()
+      return
+    }
     if (typing || covered || e.ctrlKey || e.altKey || e.metaKey) return
     if (e.key in KEYS) go(KEYS[e.key])
   }
@@ -615,8 +660,17 @@
     // for nothing, maybe while a game is running.
     // Everything else arrives as events. Coming back to the window is the one
     // moment worth re-checking, in case an event was missed while hidden.
+    // Clips saved before the window first shows are not new arrivals.
+    if (document.visibilityState === 'hidden') hiddenAt = Date.now()
     const onFocus = () => {
-      if (document.visibilityState !== 'visible') return
+      if (document.visibilityState !== 'visible') {
+        if (!hiddenAt) hiddenAt = Date.now()
+        return
+      }
+      if (hiddenAt) {
+        arriveAfter = hiddenAt
+        hiddenAt = 0
+      }
       refreshStatus()
       refreshLibrary()
       refreshUsage()
@@ -663,12 +717,30 @@
             secondaryAction: { label: 'Open', run },
           }, 8000)
           flash = true
-          setTimeout(() => (flash = false), 400)
+          clearTimeout(flashTimer)
+          flashTimer = setTimeout(() => (flash = false), 1200)
+          pendingArrivals.add(path)
         }
         refreshLibrary()
         refreshUsage()
       }),
-      onScreenshotSaved(() => notify('Screenshot saved')),
+      onScreenshotSaved((path) => {
+        // Like a saved clip: its picture, Copy and Open. The listing that
+        // follows fills in its size; until then a stand-in will do.
+        const listed = (): Screenshot => screenshots.find((s) => s.path === path) ?? { path, game: status?.game ?? '', size: 0, modified_ms: Date.now() }
+        showToast({
+          text: 'Screenshot saved',
+          media: { path, thumbnail: null, src: thumbUrl(path), game: status?.game ?? '', duration: null },
+          action: { label: 'Copy', run: () => copyClip(listed()) },
+          secondaryAction: {
+            label: 'Open',
+            run: () => {
+              closeToast()
+              shot = listed()
+            },
+          },
+        }, 8000)
+      }),
       onMarked(() => notify('Moment marked')),
       onLibraryChanged(() => {
         refreshLibrary()
@@ -715,7 +787,7 @@
     <!-- A clip or screenshot open in its place: this can't be seen, clicked or tabbed to. -->
     <div class="workspace flex min-w-0 flex-1 {covered ? 'invisible' : ''}" inert={covered}>
       <LibraryNav {games} {clips} {scope} game={gameName} settings={view === 'settings'} {category} update={newRelease} onscope={list} onsettings={() => go('settings')} oncategory={(c) => (category = c)} onback={() => go('library')} onupdate={() => (updatePrompt = true)}>
-        {#snippet capture()}<CaptureControl {status} {now} {flash} {saving} {hotkey} {games} onsave={save} onchoosescreen={chooseScreen} onignore={ignoreGame} onrecording={() => openSettings('Recording')} />{/snippet}
+        {#snippet capture()}<CaptureControl {status} {now} {flash} {saving} {hotkey} onsave={save} onchoosescreen={chooseScreen} onignore={ignoreGame} onrecording={() => openSettings('Recording')} />{/snippet}
       </LibraryNav>
       <!-- The library stays mounted so Settings preserves search and scroll. -->
       <main class="library-pane relative flex min-w-0 flex-1 flex-col">
@@ -745,6 +817,7 @@
               {settings}
               {copyingPath}
               {copiedPath}
+              copyProgress={copyPhase === 'preparing' ? renderProgress : null}
               {copyBlocked}
               onopen={(c, from) => open(c.path, from)}
               onshot={(s) => {
@@ -776,7 +849,8 @@
           </div>
         {/if}
       </main>
-      {#if !covered && displayNotice}
+      <!-- Always mounted while the library shows, so a notice can leave with its own exit. -->
+      {#if !covered}
         <div class="capture-notice-slot"><CaptureNotice notice={displayNotice} {copyBlocked} ondismiss={closeToast} onpause={pauseNotice} onresume={resumeNotice} /></div>
       {/if}
     </div>

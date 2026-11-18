@@ -4,7 +4,7 @@
   import { ArrowLeft, Trash2, X } from '@lucide/svelte'
   import { type Screenshot, fileUrl } from './api'
   import { gameName, size, when } from './format'
-  import type { Notice } from './StatusBar.svelte'
+  import type { Notice } from './types'
 
   let {
     shot,

@@ -2,6 +2,7 @@
 // so they live in localStorage rather than the recorder's settings file.
 
 export type ThumbSize = 'small' | 'medium' | 'large'
+export type Sort = 'newest' | 'oldest' | 'longest' | 'largest'
 
 export interface Prefs {
   /** Play a muted preview when the pointer rests on a clip card. */
@@ -22,6 +23,9 @@ export interface Prefs {
   shareLimitSave: boolean
   /** The size to fit under, in megabytes. */
   shareMaxMb: number
+  /** The library's order, and how a game's clips are grouped. */
+  sort: Sort
+  grouping: 'session' | 'day'
 }
 
 const KEY = 'reruns/prefs'
@@ -36,6 +40,8 @@ const DEFAULTS: Prefs = {
   shareLimit: true,
   shareLimitSave: false,
   shareMaxMb: 10,
+  sort: 'newest',
+  grouping: 'day',
 }
 
 function load(): Prefs {

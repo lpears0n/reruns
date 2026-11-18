@@ -19,6 +19,7 @@
     selected = false,
     copying = false,
     copied = false,
+    copyProgress = null,
     copyBlocked = false,
     onopen,
     ondelete,
@@ -30,8 +31,6 @@
     clip: Clip
     /** Name the game; off where the list is one game's. */
     showGame?: boolean
-    /** The game's box art, beside its name where the card names it. */
-    box?: string | null
     /** The grid isn't in dated sections: say the day with the time. */
     dated?: boolean
     /** Selection mode: clicking toggles selection instead of opening. */
@@ -39,6 +38,8 @@
     selected?: boolean
     copying?: boolean
     copied?: boolean
+    /** A large clip being prepared to copy: how far, 0 to 1, along the foot line. */
+    copyProgress?: number | null
     copyBlocked?: boolean
     onopen: () => void
     ondelete: () => void
@@ -123,11 +124,10 @@
   /** The thumbnail that failed to load (its file is gone): the frame stays plain. */
   let missing = $state<string | null>(null)
 
-  const details = $derived([subtitle, title !== time && time, clip.is_edit && 'Trimmed', moments.length && `${moments.length} marked`].filter(Boolean).join('\u2003'))
-  const primaryTime = $derived(!clip.title && showGame && !dated)
-  const secondaryTime = $derived(title !== time && !primaryTime)
-  const detailLabel = $derived(subtitle || (clip.is_edit ? 'Trimmed' : moments.length ? `${moments.length} marked` : ''))
-  const hasDetails = $derived(!!detailLabel || secondaryTime)
+  // The time always sits at the end of the first line, so a row's times
+  // line up; the second line is what else is true of the clip.
+  const flags = $derived([clip.is_edit && 'Trimmed', moments.length && `${moments.length} marked`].filter((f): f is string => !!f))
+  const details = $derived([subtitle, ...flags].filter(Boolean).join(', '))
 
   function more(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -186,7 +186,9 @@
       <span class={['pick', { on: selected }]} aria-hidden="true"><Check size={14} strokeWidth={3} /></span>
     {/if}
 
-    {#if hovering && !selectable}
+    {#if copying && copyProgress != null}
+      <span class="copy-progress" style:transform="scaleX({Math.min(1, Math.max(0, copyProgress))})" aria-hidden="true"></span>
+    {:else if hovering && !selectable}
       <!-- Follows the pointer across the picture, by transform. -->
       <span class="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-accent" style:transform="scaleX({across})" aria-hidden="true"></span>
     {/if}
@@ -203,16 +205,20 @@
         dragOut(clip.path)
       }}
       aria-pressed={selectable ? selected : undefined}
+      aria-keyshortcuts={selectable ? undefined : 'Control+C Delete F'}
       aria-label="{selectable ? 'Select' : 'Open'} {clip.title ? `${clip.title}, ` : ''}{game} clip from {when(clip.created_ms)}{clip.duration != null ? `, ${duration(clip.duration)}` : ''}{moments.length ? `, ${moments.length} marked moment${moments.length === 1 ? '' : 's'}` : ''}"
     ></button>
     {#if !selectable}
       <div class="media-tools" class:shown={copying || copied}>
-        <button class="clip-copy media-tool" onclick={oncopy} disabled={copyBlocked} aria-label="Copy clip" title={copied ? 'Copied' : copying ? 'Copying…' : 'Copy clip'}>
+        <!-- One tab stop per card: these act on the focused card by its keys too. -->
+        <!-- Copy, then Copied, in the same width; progress and Cancel for a
+             large clip are in the notice and along the foot line. -->
+        <button class="clip-copy media-tool" tabindex="-1" onclick={oncopy} disabled={copyBlocked && !copying} aria-busy={copying} aria-label="Copy clip" title={copied ? 'Copied' : 'Copy clip (Ctrl+C)'}>
           {#if copied}<Check size={14} />{:else}<Copy size={14} />{/if}
-          <span class="copy-word">{copied ? 'Copied' : copying ? 'Copying…' : 'Copy'}</span>
+          <span class="copy-word"><span>{copied ? 'Copied' : 'Copy'}</span></span>
         </button>
         {#if onmenu}
-          <button class="media-tool media-more" onclick={more} aria-label="Clip actions" aria-haspopup="menu" title="Clip actions"><Ellipsis size={16} /></button>
+          <button class="media-tool media-more" tabindex="-1" onclick={more} aria-label="Clip actions" aria-haspopup="menu" title="Clip actions"><Ellipsis size={16} /></button>
         {/if}
       </div>
     {/if}
@@ -231,12 +237,12 @@
         {#if clip.favorite && !selectable}
           <Star size={11} fill="currentColor" class="favorite-mark flex-none text-fg-2" aria-hidden="true" />
         {/if}
-        {#if primaryTime}<span class="caption-time text-muted tabular-nums">{time}</span>{/if}
+        {#if title !== time}<span class="caption-time text-muted tabular-nums">{time}</span>{/if}
       </div>
-      {#if hasDetails}
+      {#if details}
         <div class="card-details text-secondary text-muted" title={details}>
-          {#if detailLabel}<span class="detail-label truncate">{detailLabel}</span>{/if}
-          {#if secondaryTime}<span class="detail-time truncate tabular-nums">{time}</span>{/if}
+          {#if subtitle}<span class="detail-label truncate">{subtitle}</span>{/if}
+          {#each flags as flag (flag)}<span class="detail-flag">{flag}</span>{/each}
         </div>
       {/if}
     </div>
@@ -277,66 +283,13 @@
   .card-details {
     display: flex;
     min-width: 0;
-    gap: 12px;
+    gap: 10px;
     margin-top: 2px;
     line-height: 18px;
   }
 
   .detail-label { min-width: 0; }
-  .detail-time { min-width: 0; margin-left: auto; }
-  .detail-time:only-child { margin-left: 0; }
-
-  .media-tools {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    display: flex;
-    align-items: center;
-    padding: 2px;
-    border: 1px solid rgb(255 255 255 / 14%);
-    border-radius: 4px;
-    background: rgb(15 16 18 / 94%);
-    color: #f4f4f2;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--duration-fast) var(--ease-out);
-  }
-
-  .card:is(:hover, :focus-within) .media-tools,
-  .media-tools.shown {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .media-tool {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    height: 30px;
-    padding: 0 8px;
-    border-radius: 2px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-  }
-
-  .media-tool:hover { background: rgb(255 255 255 / 12%); }
-  .media-tool:focus-visible { outline: 1px solid white; outline-offset: -2px; }
-  .media-tool:disabled { opacity: 0.5; cursor: default; }
-  .media-more { width: 30px; padding: 0; }
-  .clip-copy + .media-more { border-left: 1px solid rgb(255 255 255 / 16%); border-radius: 0 2px 2px 0; }
-
-  @media (hover: none), (pointer: coarse) {
-    .media-tools { opacity: 1; pointer-events: auto; }
-  }
-
-  @media (pointer: coarse) {
-    .media-tool {
-      min-width: 44px;
-      min-height: 44px;
-    }
-  }
+  .detail-flag { flex: none; }
 
   /* Marked moments: small white diamonds standing on the picture's foot. */
   .moments {
@@ -370,6 +323,17 @@
     background: var(--color-fg);
   }
 
+  /* A large clip being prepared to copy: the foot line fills. */
+  .copy-progress {
+    position: absolute;
+    inset: auto 0 0;
+    height: 2px;
+    background: var(--color-accent);
+    transform-origin: left;
+    transition: transform 180ms var(--ease-out);
+    pointer-events: none;
+  }
+
   .ring {
     position: absolute;
     inset: 0;
@@ -377,13 +341,36 @@
     box-shadow: inset 0 0 0 2px var(--color-accent);
     opacity: 0;
     pointer-events: none;
-    transition: opacity 700ms var(--ease-out);
+    transition: opacity var(--duration-normal) var(--ease-out);
   }
 
   .card:global(.returned) .ring {
     opacity: 1;
     transition: none;
   }
+
+  /* A clip that arrived while the window was away: its picture comes in,
+     then the foot line runs across once and fades (continuity.ts arrive). */
+  .card:global(.arrived) .frame {
+    animation: arrive-frame 160ms var(--ease-out) both;
+  }
+
+  .card:global(.arrived) .frame::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0;
+    height: 2px;
+    background: var(--color-accent);
+    transform-origin: left;
+    pointer-events: none;
+    animation:
+      arrive-line 200ms var(--ease-out) 120ms both,
+      arrive-fade 200ms var(--ease-out) 1100ms forwards;
+  }
+
+  @keyframes arrive-frame { from { opacity: 0; } }
+  @keyframes arrive-line { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  @keyframes arrive-fade { to { opacity: 0; } }
 
   /* Opacity, not visibility: the card's button inside keeps its focus. */
   .card:global(.landing) .frame {

@@ -4,7 +4,7 @@
 //
 // Neither direction waits on it: the viewer is there and takes keys at once,
 // and Esc returns at once; the moving picture is a copy drawn over the page
-// in its own fixed layer and removed when it lands. One element, ~240 ms,
+// in its own fixed layer and removed when it lands. One element, ~200 ms,
 // nothing repeated. Reduced motion skips it.
 const reduced = () => document.documentElement.hasAttribute('data-reduce-motion')
 const EASE = 'cubic-bezier(0.23, 1, 0.32, 1)'
@@ -12,6 +12,10 @@ const EASE = 'cubic-bezier(0.23, 1, 0.32, 1)'
 /** A card being opened: its copy, already in place over the card, so the
  *  library can vanish without a blank frame before the flight starts. */
 let opened: { path: string; rect: DOMRect; el: HTMLElement; timer: ReturnType<typeof setTimeout> } | null = null
+/** The copy on its way into the player: Esc before it lands removes it. */
+let flying: HTMLElement | null = null
+/** Corners of the copy: the card's frame (tokens.css --t-radius-frame). */
+const RADIUS = 4
 
 function ghost(src: string | null, r: { left: number; top: number; width: number; height: number }, radius: number) {
   const el = document.createElement('div')
@@ -44,7 +48,7 @@ export function noteOpen(path: string, frame: HTMLElement) {
   drop()
   if (reduced()) return
   const rect = frame.getBoundingClientRect()
-  const el = ghost(frame.querySelector('img')?.currentSrc || null, rect, 8)
+  const el = ghost(frame.querySelector('img')?.currentSrc || null, rect, RADIUS)
   // The open can fail (the file is gone): don't leave the copy behind.
   opened = { path, rect, el, timer: setTimeout(drop, 1500) }
 }
@@ -78,14 +82,31 @@ export function flyIn(path: string, player: HTMLElement, video: HTMLVideoElement
     video.addEventListener('loadeddata', () => done(), { once: true })
     setTimeout(done, 700)
   })
-  const move = from.el.animate([box(from.rect), box(to)], { duration: 240, easing: EASE, fill: 'forwards' })
-  return move.finished.then(() => ready).then(() => from.el.remove(), () => from.el.remove())
+  flying = from.el
+  const land = () => {
+    from.el.remove()
+    if (flying === from.el) flying = null
+  }
+  const move = from.el.animate([box(from.rect), box(to)], { duration: 200, easing: EASE, fill: 'forwards' })
+  return move.finished.then(() => ready).then(land, land)
+}
+
+/** Ring a card once, holding a moment before it fades (Undo brought it
+ *  back). The ring is opacity only; reduced motion keeps it, just without
+ *  the fade. */
+export function ring(path: string) {
+  const card = document.querySelector<HTMLElement>(`[data-clip-path="${CSS.escape(path)}"]`)
+  if (!card) return
+  card.classList.add('returned')
+  setTimeout(() => card.classList.remove('returned'), 700)
 }
 
 /** Back to the library from `path`, whose picture was at `from`: once the
  *  library is showing, fly to that clip's card and ring it once. */
 export function flyBack(path: string, from: DOMRect | null, src: string | null) {
   drop()
+  flying?.remove()
+  flying = null
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       const card = document.querySelector<HTMLElement>(`[data-clip-path="${CSS.escape(path)}"]`)
@@ -97,15 +118,37 @@ export function flyBack(path: string, from: DOMRect | null, src: string | null) 
       frame.scrollIntoView({ block: 'nearest' })
       const to = frame.getBoundingClientRect()
       const ring = () => card.classList.add('returned')
-      setTimeout(() => card.classList.remove('returned'), 900)
+      setTimeout(() => card.classList.remove('returned'), 700)
       if (!from || reduced()) return ring()
-      const el = ghost(src ?? frame.querySelector('img')?.currentSrc ?? null, from, 8)
+      const el = ghost(src ?? frame.querySelector('img')?.currentSrc ?? null, from, RADIUS)
       card.classList.add('landing')
-      el.animate([box(from), box(to)], { duration: 220, easing: EASE, fill: 'forwards' }).onfinish = () => {
+      el.animate([box(from), box(to)], { duration: 180, easing: EASE, fill: 'forwards' }).onfinish = () => {
         card.classList.remove('landing')
         el.remove()
         ring()
       }
     }),
   )
+}
+
+/** Clips saved while the window was away (or just now, from it): their
+ *  cards come in, and a line runs along each one's foot, the line that
+ *  means time when scrubbing. At most four; the pointer stops it; reduced
+ *  motion rings the card instead. Cards outside the grid's window are
+ *  skipped. */
+export function arrive(paths: string[]) {
+  for (const path of paths.slice(0, 4)) {
+    const card = document.querySelector<HTMLElement>(`[data-clip-path="${CSS.escape(path)}"]`)
+    if (!card) continue
+    if (reduced()) {
+      ring(path)
+      continue
+    }
+    card.classList.remove('arrived')
+    void card.offsetWidth // restart, if it was still arriving
+    card.classList.add('arrived')
+    const done = () => card.classList.remove('arrived')
+    setTimeout(done, 1400)
+    card.addEventListener('pointerenter', done, { once: true })
+  }
 }

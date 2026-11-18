@@ -54,7 +54,7 @@
   import { playbackStats } from './playbackStats'
   import Popover from './Popover.svelte'
   import { prefs } from './prefs.svelte'
-  import type { Notice } from './StatusBar.svelte'
+  import type { Notice } from './types'
   import Timeline from './Timeline.svelte'
   import Art from './Art.svelte'
   import { flyBack, flyIn } from './continuity'

@@ -1,6 +1,6 @@
 <!-- The empty library needs one instruction, with setup only when needed. -->
 <script lang="ts">
-  import type { Settings, Status } from './api'
+  import type { Status } from './api'
   import type { Category } from './SettingsView.svelte'
 
   let {
@@ -11,7 +11,6 @@
   }: {
     hotkey: string
     status: Status | null
-    settings: Settings | null
     onchoosescreen: () => void
     onsettings: (c: Category) => void
   } = $props()

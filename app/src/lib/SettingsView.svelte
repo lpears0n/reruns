@@ -37,7 +37,7 @@
   } from './quality'
   import Row from './Row.svelte'
   import Segmented from './Segmented.svelte'
-  import type { Notice } from './StatusBar.svelte'
+  import type { Notice } from './types'
   import Toggle from './Toggle.svelte'
 
   let {

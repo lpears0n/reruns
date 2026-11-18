@@ -120,9 +120,10 @@
     color: var(--color-fg);
   }
 
-  /* Reduced motion (system preference or the Appearance toggle): keep
-     layout changes instant, but leave opacity fades, which don't cause
-     discomfort. */
+  /* Reduced motion (system preference or the Appearance toggle): every CSS
+     transition and animation finishes at once. State still changes (labels,
+     colours, opacity end states); nothing travels. Script-driven motion
+     (continuity.ts) checks the same attribute itself. */
   [data-reduce-motion] *,
   [data-reduce-motion] *::before,
   [data-reduce-motion] *::after {
@@ -254,6 +255,66 @@
 .media-card {
   position: relative;
   isolation: isolate;
+}
+
+/* A card's Copy and More: one opaque plate over the picture, shown while
+   the card is in use (or while its copy is running), always on touch. */
+.media-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  background: rgb(15 16 18 / 94%);
+  color: #f4f4f2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.media-card:is(:hover, :focus-within) .media-tools,
+.media-tools.shown {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.media-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.media-tool:hover { background: rgb(255 255 255 / 12%); }
+.media-tool:focus-visible { outline: 1px solid white; outline-offset: -2px; }
+.media-tool:disabled { opacity: 0.5; cursor: default; }
+.media-more { width: 30px; padding: 0; }
+.media-tool:active:not(:disabled) { background: rgb(255 255 255 / 20%); }
+.clip-copy + .media-more { border-left: 1px solid rgb(255 255 255 / 16%); border-radius: 0 2px 2px 0; }
+.clip-copy[aria-busy='true'] { cursor: progress; }
+
+/* Copy and Copied take the same width: the longer word is held in place
+   (generated content, so it is neither read out nor part of the text). */
+.copy-word { display: inline-grid; }
+.copy-word > span,
+.copy-word::after { grid-area: 1 / 1; }
+.copy-word::after { content: 'Copied'; visibility: hidden; }
+
+@media (hover: none), (pointer: coarse) {
+  .media-tools { opacity: 1; pointer-events: auto; }
+}
+
+@media (pointer: coarse) {
+  .media-tool { min-width: 44px; min-height: 44px; }
 }
 
 /* One crisp contour answers the keyboard; selection keeps its checkbox.

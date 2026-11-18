@@ -2,9 +2,10 @@
      callbacks; the notice only presents the operation and its actions. -->
 <script lang="ts">
   import { X } from '@lucide/svelte'
+  import { fly } from 'svelte/transition'
   import { fileUrl } from './api'
   import { duration, gameName } from './format'
-  import type { Notice } from './StatusBar.svelte'
+  import type { Notice } from './types'
 
   let {
     notice,
@@ -24,9 +25,12 @@
   let missing = $state<string | null>(null)
   let overflowing = $state(false)
   let hovered = false
-  const thumbnail = $derived(notice?.media?.thumbnail ?? null)
+  /** The saved capture's picture: a clip's thumbnail file, or a ready URL. */
+  const thumbnail = $derived(notice?.media?.src ?? (notice?.media?.thumbnail ? fileUrl(notice.media.thumbnail) : null))
   const progress = $derived(notice?.progress == null ? null : Math.min(1, Math.max(0, notice.progress)))
   const blocked = (label: string) => copyBlocked && /^copy\b/i.test(label)
+  /** The key named beside an action, as aria-keyshortcuts spells it. */
+  const shortcut = (key?: string) => key?.replace('Ctrl', 'Control')
 
   function watchMessage(node: HTMLDivElement) {
     const measure = () => (overflowing = node.scrollHeight > node.clientHeight + 1)
@@ -56,11 +60,11 @@
 {#if notice}
   <!-- Keep the action nodes mounted while the progress text changes, so
        keyboard focus does not disappear from Cancel or Undo. -->
-  <section class="capture-notice" class:error={notice.error} aria-label="Notification" onmouseenter={enter} onmouseleave={leave} onfocusin={() => onpause?.()} onfocusout={blur}>
+  <section class="capture-notice" class:error={notice.error} out:fly={{ y: 4, duration: 120 }} aria-label="Notification" onmouseenter={enter} onmouseleave={leave} onfocusin={() => onpause?.()} onfocusout={blur}>
     <div class="notice-layout">
       {#if notice.media && thumbnail && thumbnail !== missing}
         <div class="notice-thumbnail" aria-hidden="true">
-          <img src={fileUrl(thumbnail)} alt="" draggable="false" onerror={() => (missing = thumbnail)} />
+          <img src={thumbnail} alt="" draggable="false" onerror={() => (missing = thumbnail)} />
         </div>
       {/if}
 
@@ -84,10 +88,12 @@
         {#if notice.action || notice.secondaryAction}
           <div class="notice-actions">
             {#if notice.action}
-              <button class={notice.media && !notice.persistent ? 'btn-sm' : 'btn-text'} disabled={blocked(notice.action.label)} onclick={notice.action.run}>{notice.action.label}</button>
+              <button class={notice.media && !notice.persistent ? 'btn-sm' : 'btn-text'} disabled={blocked(notice.action.label)} onclick={notice.action.run} aria-keyshortcuts={shortcut(notice.action.key)}>{notice.action.label}</button>
+              {#if notice.action.key}<span class="notice-key" aria-hidden="true">{notice.action.key}</span>{/if}
             {/if}
             {#if notice.secondaryAction}
-              <button class="btn-text" disabled={blocked(notice.secondaryAction.label)} onclick={notice.secondaryAction.run}>{notice.secondaryAction.label}</button>
+              <button class="btn-text" disabled={blocked(notice.secondaryAction.label)} onclick={notice.secondaryAction.run} aria-keyshortcuts={shortcut(notice.secondaryAction.key)}>{notice.secondaryAction.label}</button>
+              {#if notice.secondaryAction.key}<span class="notice-key" aria-hidden="true">{notice.secondaryAction.key}</span>{/if}
             {/if}
           </div>
         {/if}
@@ -115,8 +121,9 @@
     border-radius: var(--radius-overlay);
     background: var(--color-raised);
     box-shadow: 0 3px 8px rgb(0 0 0 / 22%), 0 12px 28px rgb(0 0 0 / 28%);
-    transition: opacity var(--duration-normal) var(--ease-out);
-    @starting-style { opacity: 0; }
+    /* Rises into place; leaves with a short drop (out:fly). */
+    transition: opacity var(--duration-normal) var(--ease-out), translate var(--duration-normal) var(--ease-out);
+    @starting-style { opacity: 0; translate: 0 8px; }
   }
 
   .notice-layout {
@@ -155,7 +162,6 @@
   .notice-message {
     max-height: min(180px, calc(100vh - 240px));
     overflow-y: auto;
-    scrollbar-width: thin;
     overscroll-behavior: contain;
   }
 
@@ -200,6 +206,7 @@
   }
 
   .notice-actions > :global(.btn-text:first-child) { margin-left: -8px; }
+  .notice-key { margin: 0 6px 0 -2px; color: var(--color-muted); font-size: var(--text-caption); }
 
   .notice-dismiss {
     width: 24px;
