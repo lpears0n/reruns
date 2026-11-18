@@ -3664,6 +3664,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "reruns-setup"
+version = "1.2.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "windows 0.61.3",
+ "winreg 0.55.0",
+]
+
+[[package]]
 name = "rerunsctl"
 version = "1.2.0"
 dependencies = [

@@ -1,0 +1,126 @@
+<!doctype html>
+<!-- Reruns Setup's window. Windows 11 draws its 8px corners, border and
+     shadow; this draws the ink surface with a slight vignette. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reruns Setup</title>
+<style>
+  :root {
+    --font: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+    --hover: #373838; --fg: #f1f0eb; --fg-2: #c0c1bc; --muted: #989c98; --faint: #6e726e;
+    --accent: #e4e5df; --accent-hover: #f4f5ef; --on-accent: #181a18; --danger: #f26d5f;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1); --fast: 120ms; --normal: 180ms;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  /* Lighter above the middle, darker toward the edges: slightly raised. */
+  body { position: relative; font: 14px/20px var(--font); color: var(--fg); -webkit-font-smoothing: antialiased; user-select: none; cursor: default;
+    background: radial-gradient(ellipse 75% 85% at 50% 38%, #272828 0%, #1c1d1d 60%, #141515 100%); }
+
+  .caption { position: absolute; top: 0; right: 0; display: flex; height: 32px; }
+  .caption button { width: 46px; border: 0; background: none; color: var(--fg-2); display: grid; place-items: center;
+    transition: background-color var(--fast), color var(--fast); }
+  .caption button:hover { background: var(--hover); color: var(--fg); }
+  .caption .close:hover { background: #c42b1c; color: #fff; }
+  .caption button:disabled { color: var(--faint); background: none; }
+  .caption button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .wordmark { position: absolute; left: 32px; top: 36px; width: 195px; height: 39px; pointer-events: none; }
+  .foot-row { position: absolute; left: 32px; right: 28px; bottom: 28px; height: 36px; display: flex; align-items: center; gap: 16px; }
+  .version { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .message { margin-left: auto; font-size: 13px; line-height: 18px; color: var(--danger); text-align: right; }
+  .message:empty { display: none; }
+
+  /* One cell for the button and the percentage, so nothing moves. */
+  .action { position: relative; width: 132px; height: 36px; flex: none; margin-left: auto; }
+  .message:not(:empty) + .action { margin-left: 0; }
+  .action button { position: absolute; inset: 0; border: 0; border-radius: 3px; font: 500 14px/20px var(--font);
+    background: var(--accent); color: var(--on-accent); transition: opacity var(--fast), background-color var(--fast); }
+  .action button:hover { background: var(--accent-hover); }
+  .action button:active { filter: brightness(.9); }
+  .action button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .action .percent { position: absolute; inset: 0; pointer-events: none; display: grid; place-items: center end; font-size: 13px; color: var(--fg-2);
+    font-variant-numeric: tabular-nums; opacity: 0; transition: opacity var(--fast); }
+  .busy .action button { opacity: 0; pointer-events: none; }
+  .busy .action .percent { opacity: 1; }
+
+  /* The app's 2px foot line: here it is the install's progress. */
+  .foot { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; }
+  .foot span { position: absolute; inset: 0; background: var(--accent); transform-origin: left; transform: scaleX(0);
+    transition: transform var(--normal) var(--ease-out); }
+  @media (prefers-reduced-motion: reduce) { .foot span, .action button, .action .percent { transition: none; } }
+</style>
+</head>
+<body data-tauri-drag-region>
+  <div class="caption">
+    <button id="minimize" aria-label="Minimize"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5.5h10" stroke="currentColor"/></svg></button>
+    <button id="close" class="close" aria-label="Close"><svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9"/></svg></button>
+  </div>
+
+  <svg class="wordmark" viewBox="0 0 130 26" fill="#f1f0eb" role="img" aria-label="Reruns">
+    <path transform="matrix(.75 -.09208842 0 .75 0 3.2278456)" d="M0 0H13.2L20 7V13.44H12.6V8.96H7.4V28H0Z"/>
+    <path transform="matrix(1 -.12278456 0 1 19 3.2278456)" fill-rule="evenodd" d="M5 0H15L20 5V12H5V16H20V21H5L0 16V5ZM5 5V8H15V5Z"/>
+    <path transform="matrix(.75 -.09208842 0 .75 43 3.2278456)" d="M0 0H13.2L20 7V13.44H12.6V8.96H7.4V28H0Z"/>
+    <path transform="matrix(1 -.12278456 0 1 62 3.2278456)" d="M0 0H5V16H15V0H20V21H5L0 16Z"/>
+    <path transform="matrix(1 -.12278456 0 1 86 3.2278456)" d="M0 0H15L20 5V21H15V5H5V21H0Z"/>
+    <path transform="matrix(1 -.12278456 0 1 110 3.2278456)" d="M5 0H20V5H5V8H15L20 13V16L15 21H0V16H15V13H5L0 8V5Z"/>
+  </svg>
+
+  <div class="foot-row" data-tauri-drag-region>
+    <span class="version" id="version" data-tauri-drag-region></span>
+    <span class="message" id="message" role="alert"></span>
+    <div class="action">
+      <button id="go">Install</button>
+      <span class="percent" id="percent" aria-live="polite">Installing</span>
+    </div>
+  </div>
+  <div class="foot" role="progressbar" aria-label="Installing" aria-valuemin="0" aria-valuemax="100"><span id="bar"></span></div>
+
+<script>
+  const { invoke } = window.__TAURI__.core;
+  const win = window.__TAURI__.window.getCurrentWindow();
+  const $ = id => document.getElementById(id);
+  const LABEL = { install: 'Install', update: 'Update', reinstall: 'Reinstall' };
+
+  function progress(p) {
+    $('bar').style.transform = `scaleX(${p})`;
+    $('percent').textContent = Math.round(p * 100) + '%';
+  }
+
+  async function go() {
+    document.body.classList.add('busy');
+    $('close').disabled = true;
+    $('message').textContent = '';
+    $('percent').textContent = 'Installing';
+    progress(0);
+    try {
+      await invoke('install');
+      progress(1);
+      // The installer starts Reruns; Setup's work is done.
+      setTimeout(() => win.close(), 800);
+    } catch (e) {
+      document.body.classList.remove('busy');
+      $('close').disabled = false;
+      $('message').textContent = String(e);
+      $('go').textContent = 'Try again';
+      progress(0);
+      $('go').focus();
+    }
+  }
+
+  window.__TAURI__.event.listen('progress', e => progress(e.payload));
+  $('go').onclick = go;
+  $('minimize').onclick = () => win.minimize();
+  $('close').onclick = () => win.close();
+
+  invoke('info').then(info => {
+    $('go').textContent = LABEL[info.action];
+    $('version').textContent = info.installed && info.action !== 'install' && info.installed !== info.version
+      ? `v${info.installed} → v${info.version}` : `v${info.version}`;
+    // Enter installs at once; the ring waits for keyboard use.
+    $('go').focus({ focusVisible: false });
+  });
+</script>
+</body>
+</html>

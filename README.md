@@ -4,9 +4,10 @@ An instant replay recorder for games on Windows and Linux, kind of like Medal. I
 
 ## Download
 
-Installers for Windows (`.exe`) and Linux (AppImage, `.deb`, `.rpm`) are on the
-[releases page](https://github.com/lpears0n/reruns/releases). The Windows
-installer bundles everything it needs.
+Installers for Windows and Linux (AppImage, `.deb`, `.rpm`) are on the
+[releases page](https://github.com/lpears0n/reruns/releases). On Windows,
+download `Reruns-Setup-<version>.exe`; it bundles everything it needs. The
+other `.exe` there is the update package the app fetches by itself.
 
 ## How to run it locally
 

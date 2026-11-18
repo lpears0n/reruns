@@ -1,0 +1,20 @@
+[package]
+name = "reruns-setup"
+description = "Reruns Setup: installs Reruns from the NSIS installer it carries"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+serde_json.workspace = true
+
+[dependencies]
+# Built with plain cargo, not the Tauri CLI, so it asks for embedded assets itself.
+tauri = { version = "2", features = ["custom-protocol"] }
+serde.workspace = true
+semver = "1"
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+winreg = "0.55"
