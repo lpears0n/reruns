@@ -90,6 +90,8 @@
 
   async function go() {
     document.body.classList.add('busy');
+    // Hidden is not enough: it keeps the focus, and Enter would start a second install.
+    $('go').disabled = true;
     $('close').disabled = true;
     $('message').textContent = '';
     $('percent').textContent = 'Installing';
@@ -101,6 +103,7 @@
       setTimeout(() => win.close(), 800);
     } catch (e) {
       document.body.classList.remove('busy');
+      $('go').disabled = false;
       $('close').disabled = false;
       $('message').textContent = String(e);
       $('go').textContent = 'Try again';
