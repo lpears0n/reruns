@@ -1,14 +1,23 @@
 <!--
-  Minimize / maximize / close for a window without the system frame
-  (Windows, where the header is the title bar). Renders nothing when the
+  The window's own strip, for a window without the system frame (Windows):
+  32 px across the top that drags the window (double-click maximizes) and
+  ends in minimize / maximize / close. It carries on the colours under it
+  (the sidebar's, then the canvas's), so the content runs to the window's
+  top edge as in Windows 11's own apps, instead of sitting in a frame. Any
+  shared bar must preserve native window interactions. Renders nothing when the
   window keeps its own decorations (Linux), so the frame is never doubled.
   Close goes through the normal close request: hide to tray or quit, as set.
 -->
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window'
 
+  /** The sidebar is beside the content below (not a viewer over all of it). */
+  let { split = true }: { split?: boolean } = $props()
+
   const win = getCurrentWindow()
-  let framed = $state(true)
+  // What it was last time, so the strip is there from the first paint.
+  const KEY = 'reruns/framed'
+  let framed = $state(localStorage.getItem(KEY) !== 'false')
   let maximized = $state(false)
 
   $effect(() => {
@@ -17,6 +26,7 @@
     ;(async () => {
       try {
         framed = Boolean(await win.isDecorated())
+        localStorage.setItem(KEY, String(framed))
         if (framed || !alive) return
         maximized = Boolean(await win.isMaximized())
         unlisten = await win.onResized(async () => {
@@ -34,7 +44,9 @@
 </script>
 
 {#if !framed}
-  <div class="-mr-4 ml-1 flex h-full flex-none self-stretch" role="group" aria-label="Window">
+  <div class={['strip flex h-chrome flex-none', { split }]} data-tauri-drag-region>
+  <div class="flex-1" data-tauri-drag-region></div>
+  <div class="flex flex-none" role="group" aria-label="Window">
     <button class="caption" onclick={() => win.minimize()} aria-label="Minimize" title="Minimize">
       <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor" /></svg>
     </button>
@@ -56,9 +68,14 @@
       <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" /></svg>
     </button>
   </div>
+  </div>
 {/if}
 
 <style>
+  .strip { background: var(--color-canvas); }
+  /* Two flat fills, sidebar then canvas: 228 px is LibraryNav's width. */
+  .strip.split { background: linear-gradient(to right, var(--color-nav) 228px, var(--color-canvas) 228px); }
+
   /* Sized and coloured like Windows 11's own caption buttons. */
   .caption {
     display: flex;
@@ -69,11 +86,11 @@
     transition: background-color var(--duration-fast), color var(--duration-fast);
   }
   .caption:hover {
-    background: var(--color-raised);
+    background: var(--color-hover);
     color: var(--color-fg);
   }
   .caption:active {
-    background: var(--color-overlay);
+    background: var(--color-raised);
   }
   .caption-close:hover {
     background: #c42b1c;

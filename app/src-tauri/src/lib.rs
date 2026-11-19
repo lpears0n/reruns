@@ -254,6 +254,7 @@ struct Library {
     clips: Vec<library::Clip>,
     /// Recently played games with clips, sessions and Steam art.
     games: Vec<games::GameEntry>,
+    screenshots: Vec<library::FileEntry>,
 }
 
 /// Every clip and the games they belong to, from one pass over the
@@ -274,7 +275,12 @@ async fn list_library(app: AppHandle, state: State<'_, AppState>) -> CmdResult<L
             playing.as_ref().map(|(n, id, t)| (n.as_str(), *id, *t)),
             &ignored,
         );
-        Library { clips, games }
+        let screenshots = library::screenshots(&dir);
+        Library {
+            clips,
+            games,
+            screenshots,
+        }
     })
     .await
     .map_err(err)?;
@@ -449,11 +455,6 @@ fn play_cue(app: &AppHandle, cue: system::Cue) {
         (sound, s.sound_volume)
     };
     system::play_sound(&sound, cue, volume);
-}
-
-#[tauri::command]
-async fn save_screenshot(app: AppHandle, state: State<'_, AppState>) -> CmdResult<PathBuf> {
-    state.service.screenshot(save_dir(&app)).await
 }
 
 #[tauri::command]
@@ -664,6 +665,7 @@ async fn render_clip(
     };
     let result = out.clone();
     let source = path.clone();
+    let slow = edit.slow.and_then(|s| s.within(edit.start, edit.end));
     let cancel = state.render_cancel.clone();
     cancel.store(false, Ordering::Relaxed);
     let progress_app = app.clone();
@@ -691,7 +693,7 @@ async fn render_clip(
         .map_err(err)
         .and_then(|r| r.map_err(|e| format!("{e:#}")))
         .map(|()| {
-            library::copy_meta(&source, &result, start, end);
+            library::copy_meta(&source, &result, start, end, slow);
             let _ = app.emit(service::CLIP_SAVED, &result);
             result
         });
@@ -953,7 +955,12 @@ fn point_gstreamer_at_bundled_plugins() {
         return;
     };
     let plugins = exe.with_file_name("gst-plugins");
-    if plugins.is_dir() {
+    // A debug build copies the folder too, holding only `.keep`; pointing
+    // GStreamer at that leaves it with no plugins, so no encoder.
+    let bundled = std::fs::read_dir(&plugins).is_ok_and(|mut dir| {
+        dir.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "dll")))
+    });
+    if bundled {
         // SAFETY: called on the main thread before any other thread exists.
         unsafe {
             std::env::set_var("GST_PLUGIN_PATH", &plugins);
@@ -1025,6 +1032,17 @@ pub fn run() {
     if let Err(e) = clip_core::init() {
         logging::fatal(&format!("GStreamer failed to initialise: {e:#}"));
     }
+    // Following moved audio devices lists them, about half a second each:
+    // alongside Tauri's own start rather than before the window shows.
+    let settings = std::thread::spawn(|| {
+        let mut settings = Settings::load();
+        if settings.follow_audio_devices()
+            && let Err(e) = settings.save()
+        {
+            tracing::warn!("couldn't save the audio devices' new ids: {e:#}");
+        }
+        settings
+    });
 
     let context = tauri::generate_context!();
     let builder = tauri::Builder::default()
@@ -1057,7 +1075,7 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
-            let settings = Settings::load();
+            let settings = settings.join().unwrap_or_else(|_| Settings::load());
             let media = tauri::async_runtime::block_on(media_server::MediaServer::start())?;
             let token_path = dirs::data_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
@@ -1239,7 +1257,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             save_clip,
-            save_screenshot,
             export_plan,
             import_sound,
             preview_sound,

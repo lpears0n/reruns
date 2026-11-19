@@ -10,7 +10,7 @@ use serde::Serialize;
 pub struct HdrDisplay {
     /// What SDR white is shown at, in nits: Windows' "SDR content
     /// brightness" slider (80 nits at its lowest). A tone mapper maps
-    /// this level to SDR white.
+    /// this level to SDR white. 0 if it couldn't be read (yet).
     pub sdr_white_nits: f32,
     /// The display's reported peak brightness in nits (0 if it doesn't
     /// say).

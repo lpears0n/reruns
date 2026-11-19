@@ -48,7 +48,7 @@ pub fn watch(app: AppHandle, dir: &Path) -> Result<Handle> {
 /// the first and last clip of a game.
 fn is_library_file(p: &Path) -> bool {
     match p.extension().and_then(|e| e.to_str()) {
-        Some("mp4") => true,
+        Some("mp4" | "png") => true,
         Some("json") => p
             .file_stem()
             .and_then(|s| s.to_str())
@@ -66,6 +66,7 @@ mod tests {
     fn picks_out_library_files() {
         assert!(is_library_file(Path::new("/c/Game/2026.mp4")));
         assert!(is_library_file(Path::new("/c/Game/2026.mp4.json")));
+        assert!(is_library_file(Path::new("/c/Game/2026.png")));
         assert!(is_library_file(Path::new("/c/Game")));
         assert!(!is_library_file(Path::new("/c/Game/notes.txt")));
         assert!(!is_library_file(Path::new("/c/Game/other.json")));

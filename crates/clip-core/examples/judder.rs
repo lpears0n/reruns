@@ -5,7 +5,7 @@
 //!
 //! One line per clip, then its worst moments. The score is the share of
 //! the timeline that was a repeated or missing frame; the budget is under
-//! 0.5% (docs/DESIGN.md §5).
+//! 0.5% (docs/PERFORMANCE.md §5).
 
 use std::path::PathBuf;
 

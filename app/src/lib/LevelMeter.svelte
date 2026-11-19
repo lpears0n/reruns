@@ -23,13 +23,13 @@
 </script>
 
 <div class="w-full" role="meter" aria-label="{label} level" aria-valuemin={FLOOR} aria-valuemax={0} aria-valuenow={peakDb ?? FLOOR}>
-  <div class="relative h-1.5 overflow-hidden rounded-full bg-line-strong">
+  <div class="relative h-1.5 overflow-hidden rounded-[3px] bg-raised">
     <div
-      class="meter-fill absolute inset-0 rounded-full {clipping ? 'bg-danger' : hot ? 'bg-warn' : 'bg-ok'}"
+      class="meter-fill absolute inset-0 {clipping ? 'bg-danger' : hot ? 'bg-warn' : 'bg-ok'}"
       style:transform="scaleX({fill})"
     ></div>
   </div>
-  <div class="mt-1 h-4 truncate text-caption {error ? 'text-danger' : 'text-muted'}" title={error ?? ''}>
+  <div class="mt-1.5 h-4 truncate text-caption {error ? 'text-danger' : 'text-muted'}" title={error ?? ''}>
     {#if error}
       Can't open: {error}
     {:else if peakDb == null}
@@ -49,9 +49,6 @@
     transform-origin: left center;
     transition: transform 80ms linear;
     will-change: transform;
-  }
-  .bg-warn {
-    background: oklch(80% 0.15 85);
   }
   @media (prefers-reduced-motion: reduce) {
     .meter-fill {

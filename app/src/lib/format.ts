@@ -13,6 +13,37 @@ export function timecode(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`
 }
 
+/** Seconds from what a person types: `7`, `7.5`, `1:07`, `1:07.50`. Null when it isn't a time. */
+export function parseTime(text: string): number | null {
+  const m = /^\s*(?:(\d+):)?(\d+(?:[.,]\d+)?)\s*$/.exec(text)
+  if (!m) return null
+  const t = Number(m[1] ?? 0) * 60 + Number(m[2].replace(',', '.'))
+  return Number.isFinite(t) ? t : null
+}
+
+/** How much is kept, said plainly: "7.0 seconds", "1:12". */
+export function span(seconds: number): string {
+  return seconds < 60 ? `${seconds.toFixed(1)} second${seconds.toFixed(1) === '1.0' ? '' : 's'}` : duration(seconds)
+}
+
+// A game is shown by the name people call it. The name on disk and in the
+// sidecars (Steam's, or the executable's) is never changed: this is display
+// only. Nothing is re-cased by rule, which would break acronyms and names
+// that are capitals on purpose; a name that needs it gets an entry here.
+const ALIASES: Record<string, string> = {
+  "tom clancy's rainbow six siege": 'Rainbow Six Siege',
+  "tom clancy's rainbow six siege x": 'Rainbow Six Siege X',
+  "playerunknown's battlegrounds": 'PUBG: Battlegrounds',
+  'elden ring': 'Elden Ring',
+  astroneer: 'Astroneer',
+}
+
+/** The name to show for a game; trademark signs dropped. */
+export function gameName(name: string): string {
+  const plain = name.replace(/[®™©]/g, '').trim()
+  return ALIASES[plain.toLowerCase().replace(/’/g, "'")] ?? plain
+}
+
 /** `2026-10-28 15:04` */
 export function date(ms: number): string {
   const d = new Date(ms)
@@ -99,15 +130,16 @@ export function ago(ms: number, now = Date.now()): string {
   return 'just now'
 }
 
-/** "1h 20m", "45m", "<1m". */
+/** "1h 20m", "2h", "45m", "<1m". */
 export function playtime(ms: number): string {
   const m = Math.floor(ms / 60000)
   if (m < 1) return '<1m'
   const h = Math.floor(m / 60)
+  if (h && m % 60 === 0) return `${h}h`
   return h ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`
 }
 
-/** Local-day key and label: "Today", "Yesterday", "Tuesday", "12 Oct". */
+/** Local-day key and label: "Today", "Yesterday", "Tuesday", "November 6". */
 export function dayKey(ms: number): string {
   const d = new Date(ms)
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
@@ -120,18 +152,44 @@ export function dayLabel(ms: number, now = new Date()): string {
   if (days === 0) return 'Today'
   if (days === 1) return 'Yesterday'
   if (days < 7) return d.toLocaleDateString(undefined, { weekday: 'long' })
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' })
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' })
+}
+
+const daysAgo = (ms: number, now: Date) => {
+  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  return Math.round((start(now) - start(new Date(ms))) / 86400000)
+}
+
+/** A coarse period, for a library that gains a few clips a day: Today,
+ *  Yesterday, Past week, then each month ("November", "October 2025"). */
+export function period(ms: number, now = new Date()): { key: string; label: string } {
+  const days = daysAgo(ms, now)
+  if (days <= 0) return { key: 'today', label: 'Today' }
+  if (days === 1) return { key: 'yesterday', label: 'Yesterday' }
+  if (days < 7) return { key: 'week', label: 'Past week' }
+  const d = new Date(ms)
+  return { key: `${d.getFullYear()}-${d.getMonth()}`, label: d.toLocaleDateString(undefined, { month: 'long', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' }) }
+}
+
+/** When, inside its period: "15:58" today and yesterday, "Mon 15:58" in
+ *  the past week, "Nov 3" further back. */
+export function stamp(ms: number, now = new Date()): string {
+  const days = daysAgo(ms, now)
+  if (days <= 1) return clock(ms)
+  const d = new Date(ms)
+  if (days < 7) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${clock(ms)}`
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 /** When something happened, as people say it: "Today, 15:58",
- *  "Yesterday, 09:12", "Tuesday, 21:40", "3 Nov, 18:05". */
+ *  "Yesterday, 09:12", "Tuesday, 21:40", "November 3, 18:05". */
 export function when(ms: number, now = new Date()): string {
   return `${dayLabel(ms, now)}, ${clock(ms)}`
 }
 
-/** Time of day, "15:58". */
+/** Time of day as the locale writes it: "15:58", "4:29 PM". */
 export function clock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
 /** Play time within the local day of `dayMs`, from sessions overlapping it. */

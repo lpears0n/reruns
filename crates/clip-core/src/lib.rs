@@ -39,7 +39,9 @@ pub use win::auto;
 #[cfg(windows)]
 pub use win::display;
 
-pub use audio::{AudioDevice, AudioSource, add_audio_branch, input_devices, output_devices};
+pub use audio::{
+    AudioDevice, AudioSource, add_audio_branch, find_device, input_devices, output_devices,
+};
 pub use backend::Backend;
 #[cfg(target_os = "linux")]
 pub use capture::PipewireTarget;

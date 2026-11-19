@@ -1,18 +1,25 @@
 <!--
-  The progress line over the video: a thin rail, the played part in the
-  accent, a dot at the playhead. Trimming happens on the same line: the
-  kept range is brighter and two small markers set in and out. Moments
-  marked while recording show as ticks; clicking one jumps there. Click or
-  drag anywhere else to seek.
+  In review, one quiet seek bar. While trimming, the clip's frames become
+  a filmstrip with its audio underneath and two handles setting what is
+  kept. Cut footage dims; kept footage has a thin accent edge. The playhead
+  is the brightest thing. Handles take arrow keys and show their times
+  under the pointer, keyboard focus or a drag. Marked moments sit above
+  the frames; clicking one jumps there.
 -->
 <script lang="ts">
+  import { timecode } from './format'
+
   let {
     duration,
     time,
-    trim,
+    editing = true,
     start = $bindable(),
     end = $bindable(),
+    sprite = null,
+    frames = 0,
+    peaks = null,
     markers = [],
+    saved = null,
     slow = false,
     slowFrom = $bindable(0),
     slowTo = $bindable(0),
@@ -20,11 +27,20 @@
   }: {
     duration: number
     time: number
-    trim: boolean
+    /** False gives a simple playback seek bar; true reveals trim tools. */
+    editing?: boolean
     start: number
     end: number
+    /** URL of the clip's frames in one row (the hover sprite), when it has one. */
+    sprite?: string | null
+    frames?: number
+    /** The audio's loudness along the clip, 0 to 1. Undefined while it is
+     *  being read (an empty lane); null when there is none to draw (no lane). */
+    peaks?: Float32Array | null
     /** Marked moments, in seconds. */
     markers?: number[]
+    /** Where the save hotkey was pressed, in seconds: a replay ends there. */
+    saved?: number | null
     /** Show and edit a slow-motion range inside the trim. */
     slow?: boolean
     slowFrom?: number
@@ -32,188 +48,443 @@
     onseek: (t: number) => void
   } = $props()
 
+  /** The shortest selection: the handles never meet or cross. */
   const MIN = 0.1
-  let track: HTMLDivElement
-  let drag = $state<'start' | 'end' | 'slowFrom' | 'slowTo' | 'seek' | null>(null)
+  /** The whole strip, and the audio lane's share of it; `.strip`, `.wave` below. */
+  const HEIGHT = 60
+  const WAVE = 16
+  type Part = 'start' | 'end' | 'slowFrom' | 'slowTo' | 'seek'
+  let strip: HTMLDivElement
+  let width = $state(0)
+  let drag = $state<Part | null>(null)
 
   const frac = (t: number) => (duration > 0 ? Math.min(1, Math.max(0, t / duration)) : 0)
   const pct = (t: number) => `${frac(t) * 100}%`
-  // Played part and playhead move every frame while playing, so they move
-  // by transform (compositor only, no layout): the bar is scaled across
-  // its span and the dot rides a full-width layer shifted by the fraction.
-  const playedScale = $derived(
-    trim
-      ? frac(end) > frac(start)
-        ? Math.max(0, frac(Math.min(time, end)) - frac(start)) / (frac(end) - frac(start))
-        : 0
-      : frac(time),
-  )
+  /** Nothing trimmed yet: the kept range's edge stays faint. */
+  const whole = $derived(start <= 0.001 && end >= duration - 0.001)
+
+  // Neighbouring moments share the space between their centres. Keep the
+  // usual 20 px target where it fits, without covering a nearby mark.
+  // Coincident marks share one target; a save at that point joins its label.
+  const marked = $derived([...new Set(markers.map((m) => Math.min(duration, Math.max(0, m))))].sort((a, b) => a - b))
+  const savedTime = $derived(saved !== null && saved <= duration + 0.05 ? Math.min(saved, duration) : null)
+  const separateSave = $derived(savedTime !== null && !marked.includes(savedTime))
+  const targetWidths = $derived.by(() => {
+    const times = [...marked, ...(separateSave ? [savedTime!] : [])].sort((a, b) => a - b)
+    return new Map(times.map((t, i) => [t, Math.min(
+      20,
+      i > 0 ? (frac(t) - frac(times[i - 1])) * width : 20,
+      i < times.length - 1 ? (frac(times[i + 1]) - frac(t)) * width : 20,
+    )]))
+  })
+
+  // As many 16:9 cells as fit, each showing the frame nearest its moment.
+  const cells = $derived.by(() => {
+    if (!editing || !sprite || frames < 1) return []
+    const film = HEIGHT - (peaks === null ? 0 : WAVE)
+    const n = Math.max(1, Math.round(width / ((film * 16) / 9)))
+    return Array.from({ length: n }, (_, i) => Math.round(((i + 0.5) / n) * (frames - 1)))
+  })
+
+  // The waveform as one closed shape, mirrored about the lane's middle, in
+  // a box one unit per peak wide and two tall (stretched to fit by the SVG:
+  // a resize rescales it, nothing is read or built again).
+  const shape = $derived.by(() => {
+    if (!peaks?.length) return ''
+    // Quiet passages still show: loudness is drawn on a curve, not linearly.
+    const h = Array.from(peaks, (p) => Math.max(0.02, Math.min(1, p) ** 0.6))
+    const top = h.map((v, i) => `${i},${(1 - v).toFixed(3)} ${i + 1},${(1 - v).toFixed(3)}`)
+    const bottom = h.map((v, i) => `${i + 1},${(1 + v).toFixed(3)} ${i},${(1 + v).toFixed(3)}`).reverse()
+    return `M${top.join(' ')} ${bottom.join(' ')}Z`
+  })
+
+  /** Move one edge to `t`, kept inside the clip and clear of the other. */
+  function set(what: Part, t: number) {
+    if (what === 'start') onseek((start = Math.max(0, Math.min(t, end - MIN))))
+    else if (what === 'end') onseek((end = Math.min(duration, Math.max(t, start + MIN))))
+    else if (what === 'slowFrom') onseek((slowFrom = Math.min(Math.max(t, start), slowTo - MIN)))
+    else if (what === 'slowTo') onseek((slowTo = Math.max(Math.min(t, end), slowFrom + MIN)))
+    else onseek(Math.min(duration, Math.max(0, t)))
+  }
 
   function at(e: PointerEvent) {
-    const r = track.getBoundingClientRect()
+    const r = strip.getBoundingClientRect()
     return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * duration
   }
 
-  function down(e: PointerEvent, what: 'start' | 'end' | 'slowFrom' | 'slowTo' | 'seek') {
+  function down(e: PointerEvent, what: Part) {
+    if (e.button !== 0) return
     e.stopPropagation()
     drag = what
-    track.setPointerCapture(e.pointerId)
-    move(e)
+    strip.setPointerCapture(e.pointerId)
+    set(what, at(e))
   }
 
   function move(e: PointerEvent) {
-    if (!drag) return
-    const t = at(e)
-    if (drag === 'start') {
-      start = Math.min(t, end - MIN)
-      onseek(start)
-    } else if (drag === 'end') {
-      end = Math.max(t, start + MIN)
-      onseek(end)
-    } else if (drag === 'slowFrom') {
-      slowFrom = Math.min(Math.max(t, start), slowTo - MIN)
-      onseek(slowFrom)
-    } else if (drag === 'slowTo') {
-      slowTo = Math.max(Math.min(t, end), slowFrom + MIN)
-      onseek(slowTo)
-    } else {
-      onseek(trim ? Math.min(end, Math.max(start, t)) : t)
-    }
+    if (drag) set(drag, at(e))
   }
 
   function up() {
     drag = null
   }
+
+  /** Arrow keys: a tenth of a second on a handle, a second on the strip;
+   *  ten times that with Shift. Home and End go to the clip's ends. */
+  function key(e: KeyboardEvent, what: Part, now: number) {
+    const unit = (what === 'seek' ? 1 : 0.1) * (e.shiftKey ? 10 : 1)
+    const to: Record<string, number> = { ArrowLeft: now - unit, ArrowDown: now - unit, ArrowRight: now + unit, ArrowUp: now + unit, Home: 0, End: duration }
+    if (!(e.key in to) || e.ctrlKey || e.metaKey || e.altKey) return
+    // The viewer's own arrows (the clip before and after) stay out of it.
+    e.preventDefault()
+    e.stopPropagation()
+    set(what, Math.round(to[e.key] * 100) / 100)
+  }
 </script>
 
-<div
-  class="track"
-  class:dragging={drag !== null}
-  bind:this={track}
-  onpointerdown={(e) => down(e, 'seek')}
-  onpointermove={move}
-  onpointerup={up}
-  onpointercancel={up}
-  role="slider"
-  aria-label="Timeline"
-  aria-valuemin={0}
-  aria-valuemax={duration}
-  aria-valuenow={time}
-  tabindex="-1"
->
-  <div class="rail">
-    {#if trim}
-      <div class="kept" style:left={pct(start)} style:width="{(frac(end) - frac(start)) * 100}%"></div>
-      <div
-        class="played"
-        style:left={pct(start)}
-        style:width="{(frac(end) - frac(start)) * 100}%"
-        style:transform="scaleX({playedScale})"
-      ></div>
-    {:else}
-      <div class="played" style:left="0" style:width="100%" style:transform="scaleX({playedScale})"></div>
+<!-- The handles stand just outside the strip's ends, over the workspace's margin. -->
+<div class="scrubber">
+  <div class={['strip', { reviewing: !editing, resizing: drag && drag !== 'seek' }]} bind:this={strip} bind:clientWidth={width} onpointermove={move} onpointerup={up} onpointercancel={up} role="group" aria-label="Timeline">
+    <div
+      class="track"
+      onpointerdown={(e) => down(e, 'seek')}
+      onkeydown={(e) => key(e, 'seek', time)}
+      role="slider"
+      aria-label="Seek"
+      aria-valuemin={0}
+      aria-valuemax={duration}
+      aria-valuenow={time}
+      aria-valuetext={timecode(time)}
+      tabindex="0"
+    >
+      {#if editing}
+      <div class="film" aria-hidden="true">
+        {#each cells as frame, i (i)}
+          <div
+            style:background-image="url({sprite})"
+            style:background-size="{frames * 100}% 100%"
+            style:background-position="{frames > 1 ? (frame / (frames - 1)) * 100 : 0}% 0"
+          ></div>
+        {/each}
+      </div>
+      {#if peaks !== null}
+        <div class="wave" aria-hidden="true">
+          {#if peaks}
+            <svg viewBox="0 0 {peaks.length} 2" preserveAspectRatio="none"><path d={shape} /></svg>
+          {/if}
+        </div>
+      {/if}
+      <div class="cut" style:left="0" style:width={pct(start)}></div>
+      <div class="cut" style:left={pct(end)} style:right="0"></div>
+      <div class={['kept', { whole }]} style:left={pct(start)} style:width="{(frac(end) - frac(start)) * 100}%"></div>
+      {:else}
+        <span class="seek-line" aria-hidden="true"></span>
+        <span class="seek-progress" style:transform="scaleX({frac(time)})" aria-hidden="true"></span>
+        <span class="seek-thumb" style:left={pct(time)} aria-hidden="true"></span>
+      {/if}
+    </div>
+
+    {#if editing}
+    {#if slow}
+      <div class="slow-band" style:left={pct(slowFrom)} style:width="{(frac(slowTo) - frac(slowFrom)) * 100}%" title="Slow motion"></div>
+      {#each [['slowFrom', slowFrom, 'Slow motion start'], ['slowTo', slowTo, 'Slow motion end']] as const as [what, t, label] (what)}
+        <div
+          class="slow-marker"
+          style:left={pct(t)}
+          onpointerdown={(e) => down(e, what)}
+          onkeydown={(e) => key(e, what, t)}
+          role="slider"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={duration}
+          aria-valuenow={t}
+          aria-valuetext={timecode(t)}
+          tabindex="0"
+        ></div>
+      {/each}
     {/if}
-  </div>
-  {#if trim && slow}
-    <div class="slow-band" style:left={pct(slowFrom)} style:width="{(frac(slowTo) - frac(slowFrom)) * 100}%" title="Slow motion"></div>
-    {#each [['slowFrom', slowFrom, 'Slow motion start'], ['slowTo', slowTo, 'Slow motion end']] as const as [what, at, label] (what)}
+    {#each marked as m (m)}
+      <button
+        class="tick"
+        style:left={pct(m)}
+        style:width="{targetWidths.get(m)}px"
+        onpointerdown={(e) => {
+          e.stopPropagation()
+          onseek(m)
+        }}
+        aria-label="Marked moment at {timecode(m)}{m === savedTime ? ', saved here' : ''}"
+        tabindex="-1"
+      ><span class="tag">Marked {timecode(m)}{m === savedTime ? ' (saved here)' : ''}</span></button>
+    {/each}
+    {#if separateSave && savedTime !== null}
+      <button
+        class="tick saved"
+        style:left={pct(savedTime)}
+        style:width="{targetWidths.get(savedTime)}px"
+        onpointerdown={(e) => {
+          e.stopPropagation()
+          onseek(Math.max(0, savedTime! - 0.05))
+        }}
+        aria-label="Saved at {timecode(savedTime)}"
+        tabindex="-1"
+      ><span class="tag">Saved here</span></button>
+    {/if}
+    {#each [['start', start, 'Trim start'], ['end', end, 'Trim end']] as const as [what, t, label] (what)}
       <div
-        class="marker slow-marker"
-        style:left={pct(at)}
+        class={['handle', what, { held: drag === what }]}
+        style:left={pct(t)}
         onpointerdown={(e) => down(e, what)}
+        onkeydown={(e) => key(e, what, t)}
         role="slider"
         aria-label={label}
         aria-valuemin={0}
         aria-valuemax={duration}
-        aria-valuenow={at}
-        tabindex="-1"
-      ></div>
+        aria-valuenow={t}
+        aria-valuetext={timecode(t)}
+        tabindex="0"
+      >
+        <span class="stamp" aria-hidden="true">{timecode(t)}</span>
+      </div>
     {/each}
-  {/if}
-  {#each markers as m, i (i)}
-    <button
-      class="tick"
-      style:left={pct(m)}
-      onpointerdown={(e) => {
-        e.stopPropagation()
-        onseek(m)
-      }}
-      aria-label="Marked moment at {m.toFixed(1)} s"
-      title="Marked moment"
-      tabindex="-1"
-    ></button>
-  {/each}
-  {#if trim}
-    <div
-      class="marker"
-      style:left={pct(start)}
-      onpointerdown={(e) => down(e, 'start')}
-      role="slider"
-      aria-label="Trim start"
-      aria-valuemin={0}
-      aria-valuemax={duration}
-      aria-valuenow={start}
-      tabindex="-1"
-    ></div>
-    <div
-      class="marker"
-      style:left={pct(end)}
-      onpointerdown={(e) => down(e, 'end')}
-      role="slider"
-      aria-label="Trim end"
-      aria-valuemin={0}
-      aria-valuemax={duration}
-      aria-valuenow={end}
-      tabindex="-1"
-    ></div>
-  {/if}
-  <div class="head" style:transform="translateX({pct(time)})"><div class="dot"></div></div>
+    <!-- Moves every frame while playing, so by transform: a full-width
+         layer shifted by the fraction (compositor only, no layout). -->
+    <div class="head" style:transform="translateX({pct(time)})"><div class="line"></div></div>
+    {/if}
+  </div>
 </div>
 
 <style>
-  /* Tall enough to grab; the visible line is thin and centred in it. */
-  .track {
+  /* The strip spans the workspace edge to edge; the handles stand just
+     outside its ends. */
+  .scrubber {
+    padding: 0;
+  }
+
+  /* A 16 px lane over the frames holds the marked moments, so no mark is
+     ever drawn on top of a frame or mistaken for the playhead. */
+  .strip {
     position: relative;
-    height: 18px;
-    cursor: pointer;
+    height: 76px;
     touch-action: none;
   }
 
-  .rail {
+  /* A handle is held: the pointer is captured by the strip, so the resize
+     cursor has to be said here to stay while dragging. */
+  .strip.resizing,
+  .strip.resizing .track {
+    cursor: ew-resize;
+  }
+
+  .track {
     position: absolute;
-    top: 50%;
-    left: 0;
-    right: 0;
-    height: 3px;
-    transform: translateY(-50%);
-    border-radius: 999px;
-    background: rgb(255 255 255 / 22%);
-    transition: height var(--duration-fast);
+    inset: 16px 0 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: var(--radius-ctl);
+    background: var(--color-chrome);
+    cursor: pointer;
   }
 
-  .track:hover .rail,
-  .track.dragging .rail {
-    height: 5px;
+  .track:focus-visible {
+    outline-offset: 3px;
   }
 
+  .strip.reviewing {
+    height: 24px;
+  }
+
+  .reviewing .track {
+    inset: 0;
+    overflow: visible;
+    background: none;
+  }
+
+  .seek-line,
+  .seek-progress {
+    position: absolute;
+    inset: 10px 0;
+    border-radius: 2px;
+    pointer-events: none;
+  }
+
+  .seek-line {
+    background: var(--color-line-strong);
+  }
+
+  .seek-progress {
+    background: var(--color-fg);
+    transform-origin: left;
+  }
+
+  .seek-thumb {
+    position: absolute;
+    top: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--color-fg);
+    translate: -50% 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .reviewing:is(:hover, :focus-within) .seek-thumb {
+    opacity: 1;
+  }
+
+  .film {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    background: var(--color-raised);
+  }
+
+  .film > div {
+    flex: 1;
+    background-repeat: no-repeat;
+    /* A seam between frames, as on film: just enough to count them. */
+    box-shadow: inset -1px 0 0 rgb(0 0 0 / 28%);
+  }
+
+  /* The audio lane: under the frames in every sense, still readable. */
+  .wave {
+    position: relative;
+    flex: none;
+    height: 16px;
+    background: var(--color-chrome);
+  }
+
+  .wave svg {
+    position: absolute;
+    inset: 2px 0;
+    width: 100%;
+    height: calc(100% - 4px);
+    fill: var(--color-muted);
+    fill-opacity: 0.7;
+  }
+
+  /* Outside the trim: held back, not blacked out. */
+  .cut {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in oklab, var(--color-canvas) 76%, transparent);
+    pointer-events: none;
+  }
+
+  /* The kept range: one hairline of the accent along its top and bottom,
+     joining the handles; faint while nothing is cut. */
   .kept {
     position: absolute;
     top: 0;
     bottom: 0;
-    background: rgb(255 255 255 / 45%);
+    box-shadow:
+      inset 0 1px 0 var(--edge),
+      inset 0 -1px 0 var(--edge);
+    pointer-events: none;
+    --edge: var(--color-accent);
   }
 
-  .played {
+  .kept.whole {
+    --edge: color-mix(in oklab, var(--color-accent) 32%, transparent);
+  }
+
+  /* In and out: a slim bar of the accent outside each end of the kept
+     range, a little quieter than the accent itself. The bar is 5 px; what
+     can be grabbed is 24. Touched, it widens from its inner edge (by
+     transform: nothing moves) and takes the full accent. */
+  .handle {
     position: absolute;
-    top: 0;
+    top: 16px;
     bottom: 0;
-    border-radius: inherit;
-    background: var(--color-accent);
-    transform-origin: left center;
-    will-change: transform;
+    width: 5px;
+    cursor: ew-resize;
   }
 
-  /* Full-width layer, so translateX(n%) moves the dot n% of the track. */
+  .handle::before {
+    content: '';
+    position: absolute;
+    inset: 0 -10px;
+  }
+
+  /* The bar itself, apart from the handle so its time isn't scaled with it. */
+  .handle::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: color-mix(in oklab, var(--color-accent) 82%, var(--color-canvas));
+    box-shadow: inset 1px 0 0 rgb(255 255 255 / 14%);
+    transition:
+      background-color var(--duration-fast) var(--ease-out),
+      scale var(--duration-fast) var(--ease-out);
+  }
+
+  .handle:hover::after,
+  .handle.held::after,
+  .handle:focus-visible::after {
+    background: var(--color-accent-hover);
+    scale: 1.4 1;
+  }
+
+  .handle:focus-visible {
+    outline: 2px solid var(--color-fg);
+    outline-offset: 1px;
+  }
+
+  /* Each widens outward, away from the footage it keeps. */
+  .handle.start {
+    translate: -100% 0;
+    border-radius: 3px 0 0 3px;
+  }
+
+  .handle.start::after {
+    transform-origin: right;
+  }
+
+  .handle.end {
+    border-radius: 0 3px 3px 0;
+  }
+
+  .handle.end::after {
+    transform-origin: left;
+  }
+
+  /* Where the handle is, while it is pointed at, held or has the keyboard:
+     inside the kept range, beside the handle. Nothing else moves. */
+  .stamp {
+    position: absolute;
+    top: 8px;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--color-raised);
+    box-shadow: 0 0 0 1px var(--color-line-strong);
+    color: var(--color-fg);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .handle.start .stamp {
+    left: calc(100% + 8px);
+  }
+
+  .handle.end .stamp {
+    right: calc(100% + 8px);
+  }
+
+  .handle:hover .stamp,
+  .handle.held .stamp,
+  .handle:focus-visible .stamp {
+    opacity: 1;
+  }
+
   .head {
     position: absolute;
     inset: 0;
@@ -221,93 +492,153 @@
     will-change: transform;
   }
 
-  .dot {
+  /* The playhead: a white line a little taller than the strip, with a cap. */
+  .line {
     position: absolute;
     left: 0;
-    top: 50%;
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
+    top: 11px;
+    bottom: -3px;
+    width: 2px;
     background: #fff;
-    box-shadow: 0 0 0 1px rgb(0 0 0 / 25%);
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    transition:
-      width var(--duration-fast),
-      height var(--duration-fast);
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
+    translate: -50% 0;
   }
 
-  .track:hover .dot,
-  .track.dragging .dot {
-    width: 14px;
-    height: 14px;
+  .line::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -3px;
+    width: 8px;
+    height: 5px;
+    border-radius: 1px;
+    background: #fff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
   }
 
-  /* Slow-motion range: a striped band over the line, its own white
-     handles so it reads apart from the trim markers. */
+  /* Slow-motion range: stripes over the frames, and white edges of its
+     own so it reads apart from the trim handles. */
   .slow-band {
     position: absolute;
-    top: 50%;
-    height: 9px;
-    transform: translateY(-50%);
-    border-radius: 3px;
-    background: repeating-linear-gradient(135deg, rgb(255 255 255 / 30%) 0 3px, rgb(255 255 255 / 8%) 3px 6px);
+    top: 18px;
+    bottom: 2px;
+    background: repeating-linear-gradient(135deg, rgb(255 255 255 / 30%) 0 4px, rgb(255 255 255 / 6%) 4px 8px);
     pointer-events: none;
+  }
+
+  .slow-marker {
+    position: absolute;
+    top: 18px;
+    bottom: 2px;
+    width: 14px;
+    translate: -50% 0;
+    cursor: ew-resize;
   }
 
   .slow-marker::after {
-    background: #fff !important;
-    height: 10px !important;
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    border-radius: 1px;
+    background: #fff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
+    translate: -50% 0;
   }
 
-  /* Marked moments: short white ticks standing above the line, with a
-     wider invisible hit area. */
+  /* Marked moments: a diamond in the lane over the frames, a faint thread
+     down through them. A different shape, a different place and a quieter
+     tone than the playhead (a white line through everything) and the trim
+     handles (orange bars at the ends). Up to 20 px to aim at. */
   .tick {
     position: absolute;
     top: 0;
-    width: 10px;
-    height: 50%;
+    height: 16px;
+    width: 20px;
     padding: 0;
     border: 0;
     background: none;
-    transform: translateX(-50%);
+    translate: -50% 0;
     cursor: pointer;
   }
 
+  /* The thread belongs to the mark visually, but seeking and trimming
+     below the marker lane always reach the footage and its handles. */
+  .tick::before {
+    content: '';
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    width: 1px;
+    height: 60px;
+    background: rgb(255 255 255 / 22%);
+    pointer-events: none;
+  }
+
+  /* The moment's diamond: white, as on the cards in the library. */
   .tick::after {
     content: '';
     position: absolute;
     left: 50%;
-    bottom: 1px;
-    width: 2px;
-    height: 7px;
+    top: 4px;
+    width: 8px;
+    height: 8px;
     border-radius: 1px;
-    background: #fff;
-    box-shadow: 0 0 0 1px rgb(0 0 0 / 30%);
-    transform: translateX(-50%);
+    background: var(--color-fg-2);
+    box-shadow: 0 0 0 2px var(--color-chrome);
+    translate: -50% 0;
+    rotate: 45deg;
+    pointer-events: none;
+    transition: scale var(--duration-fast) var(--ease-out);
   }
 
-  /* In/out markers: small accent pills across the line, with a wider
-     invisible grab area around each. */
-  .marker {
-    position: absolute;
-    top: 50%;
-    width: 16px;
-    height: 22px;
-    transform: translate(-50%, -50%);
-    cursor: ew-resize;
+  .tick:hover::after {
+    background: var(--color-fg);
+    scale: 1.25;
   }
 
-  .marker::after {
-    content: '';
+  /* Where F8 was pressed: the same diamond, hollow. A replay ends there;
+     with time kept after the press it would sit inside the clip. */
+  .tick.saved::before {
+    display: none;
+  }
+
+  .tick.saved::after {
+    background: var(--color-chrome);
+    box-shadow:
+      inset 0 0 0 1.5px var(--color-fg-2),
+      0 0 0 2px var(--color-chrome);
+  }
+
+  /* Its name, over the lane, while pointed at. */
+  .tag {
     position: absolute;
+    bottom: calc(100% - 2px);
     left: 50%;
-    top: 50%;
-    width: 4px;
-    height: 14px;
-    border-radius: 2px;
-    background: var(--color-accent);
-    box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
-    transform: translate(-50%, -50%);
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--color-raised);
+    box-shadow: 0 0 0 1px var(--color-line-strong);
+    color: var(--color-fg);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
+    translate: -50% 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .tick:hover .tag {
+    opacity: 1;
+  }
+
+  .tick.saved .tag {
+    left: auto;
+    right: 0;
+    translate: 0 0;
   }
 </style>

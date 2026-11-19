@@ -11,9 +11,6 @@ importers:
       '@crabnebula/tauri-plugin-drag':
         specifier: 2.1.0
         version: 2.1.0
-      '@fontsource-variable/archivo':
-        specifier: ^5.3.0
-        version: 5.3.0
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -65,9 +62,6 @@ packages:
 
   '@crabnebula/tauri-plugin-drag@2.1.0':
     resolution: {integrity: sha512-LnUXAZwQt1cdMoGDLJ6ogW9wFCYServCZXlGadS7CA+CZ9eXS7L+Q7QyQW6g/zGw9YI2MwKFqf1aSNBGyWw+OA==}
-
-  '@fontsource-variable/archivo@5.3.0':
-    resolution: {integrity: sha512-HogK8FJelrD1o7TlZlkIVtHgc20bO5PZRWE7mUeUTdMN055alznQV6/00J00IBeu8FQAH4s3zW9UJNvKExXf+g==}
 
   '@fontsource-variable/inter@5.3.0':
     resolution: {integrity: sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==}
@@ -747,8 +741,6 @@ snapshots:
   '@crabnebula/tauri-plugin-drag@2.1.0':
     dependencies:
       '@tauri-apps/api': 2.12.4
-
-  '@fontsource-variable/archivo@5.3.0': {}
 
   '@fontsource-variable/inter@5.3.0': {}
 

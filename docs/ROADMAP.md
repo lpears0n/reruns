@@ -7,6 +7,57 @@ them so the reasoning stays.
 
 Research notes behind the choices are in [Sources](#sources) at the end.
 
+## v2.0.0 checklist
+
+Added 2026-11-18. 2.0.0 is the redesign (`codex/reruns-design-refinement`:
+the rr identity, the library and clip workspace, Settings → Appearance →
+Theme) plus Reruns Setup (`branded-installer`, built on the redesign). Tag
+it when every box under "Must have" is ticked.
+
+**Must have**
+
+- [ ] The 1.2.x fixes are on `main`: high-tier AV1 saves
+  (`fix/av1-clip-save`; saves failed with `not-negotiated` on the owner's
+  PC on 2026-11-18), audio devices whose id changed
+  (`fix-renamed-audio-device`), and the log folder button
+  (`open-log-folder`).
+- [ ] The redesign is on `main` through a PR from a branch that follows
+  `AGENTS.md`. Setup comes with it.
+- [ ] Seen working in the real window on Windows (WebView2) and on Linux
+  (WebKitGTK, KDE): library, clip workspace, trim, Copy clip, Save clip,
+  Settings and themes. No redesign pass has run on Linux yet.
+- [ ] Reruns Setup on a clean Windows install: fresh install, a PC
+  without WebView2 (it hands over to the NSIS pages), Update from 1.2.x,
+  Reinstall, uninstall. The in-app updater goes from 1.2.x to 2.0.0.
+- [ ] Setup and the NSIS installer are code-signed
+  ([RELEASING.md](RELEASING.md), Windows code signing), so SmartScreen
+  doesn't block the first download.
+- [ ] A 1.x library survives the upgrade: favorites, titles, tags,
+  markers, edits, screenshots, `settings.json` and ignored apps. Known
+  loss: the library's grouping preference resets (`grouping` became
+  `groupBy`).
+- [ ] Capture within budget on the HDR path: repeats plus holes under 0.5%
+  (`examples/judder`, PresentMon running) on Rainbow Six Siege, Dead by
+  Daylight and Deadlock. On 2026-11-18, Deadlock clips (HDR compatibility,
+  AV1, 120 fps) scored 0.9–13%. Test "Capture the window in HDR" first and
+  make it the default if it measures smooth ([HDR.md](HDR.md)).
+
+**Should have** (changes stored data, so it belongs in a major version)
+
+- [ ] A stable id in each clip's `.mp4.json` sidecar, so later APIs stop
+  identifying clips by absolute path. Clips without one get it the first
+  time they are listed. This is the first step toward watching clips from
+  a phone.
+
+**Not in 2.0.0**
+
+- Watching clips from a phone over Wi-Fi: 2.x, after the stable ids and a
+  library index.
+- Montage, crop and GIF export: [DESIGN.md](DESIGN.md) keeps Reruns from
+  growing into an editor.
+- Per-application audio (Phase 3), replays longer than RAM allows, and
+  wlroots capture: 2.x or later.
+
 ## 1. What we are competing with
 
 | | ShadowPlay / NVIDIA App | Medal | Steam Game Recording | Reruns today |

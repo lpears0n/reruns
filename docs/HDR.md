@@ -82,6 +82,39 @@ Safety:
   the capture starts (`D3DCompile`), so a shader error also just falls
   back.
 
+## When the SDR white level can't be read
+
+Seen twice on the owner's PC (2026-11-14, 03:46 and 03:54 local, game
+minimized, most likely the display asleep): Windows reported the display
+in HDR but neither its SDR white level nor its peak. The recorder used
+to log that as "80 nits" as if it were measured. Now an unread level is
+0 (like an unread peak), logged as a warning, shown in Settings as
+"SDR white unknown yet, 80 nits assumed", and asked again on every scan
+(2 s). Once Windows answers, the status takes the real level, and an HDR
+window capture (which baked the guess into its shader) restarts with it.
+The screen-area capture needs no restart: GStreamer re-reads the level
+each time Desktop Duplication reopens, which it does when the display
+comes back. Not reproduced on demand: the display answered 240 / 456
+nits on every read while awake.
+
+## Window-only HDR (checked 2026-11-14)
+
+- GStreamer main's `d3d12screencapturesrc` WGC path
+  (`gstd3d12graphicscapture.cpp`) still makes a `B8G8R8A8` frame pool and
+  has no HDR handling; its HDR tone mapping is DXGI-only. Nothing stock
+  captures one window in HDR.
+- OBS does window-only HDR through the same route as ours: WGC with FP16
+  frames, converted with the SDR white level.
+- Hooking the game's swap chain (OBS Game Capture) is window-only and
+  HDR-capable but injects into the game: anti-cheat risk, not for Reruns.
+- So the window-only path is ours, already built: "Capture the window in
+  HDR" above. Its one logged real attempt (2026-11-05) **started**
+  ("HDR window capture started (FP16, tone-mapped on the GPU)") and then
+  died on NVENC "Failed to open session", the driver problem fixed in
+  1.1.x, not on the capture. Next: one session with it on, on the
+  owner's HDR display, then a clip compared with the screen-area capture.
+  If it holds, make it the HDR compatibility default.
+
 ## Plan
 
 1. **Detect and report** (done). Gives the owner's machine a way to say

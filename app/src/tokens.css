@@ -4,53 +4,80 @@
   without Tailwind). One list, so the popup can't drift from the app.
   See docs/DESIGN.md.
 
-  Surfaces are steps of lightness on one base tint (OKLCH keeps the steps
-  perceptually even). Text is white at fixed opacities.
+  Neutral ink surfaces and offwhite controls leave color to the footage.
+  The pixel brand is a vector asset; interface text uses the system face.
+  Controls stay opaque and their corners remain close to square.
 */
 :root {
-  --t-font-sans: 'Inter Variable', Inter, system-ui, sans-serif;
-  /* Headings and numbers: semi-expanded for a sportier read. */
-  --t-font-display: 'Archivo Variable', 'Inter Variable', system-ui, sans-serif;
+  /* The platform's own face: Segoe UI Variable on Windows 11, the
+     desktop's UI font elsewhere. */
+  --t-font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Noto Sans', Cantarell, sans-serif;
+  --t-font-display: 'Segoe UI Variable Display', var(--t-font-sans);
 
-  /* Surfaces, darkest to lightest. Overlay is for things that float. */
-  --t-canvas: oklch(14% 0.004 270);
-  --t-panel: oklch(17.5% 0.004 270);
-  --t-raised: oklch(21% 0.005 270);
-  --t-overlay: oklch(24.5% 0.005 270);
+  /* A recessed navigation, a graphite canvas, then solid control surfaces.
+     Separation comes from their lightness, not repeated blurred shadows. */
+  --t-nav: #121313;
+  --t-canvas: #1b1c1c;
+  --t-chrome: #232424;
+  --t-raised: #2b2c2c;
+  --t-hover: #373838;
+  /* The popup's card (overlay.css). */
+  --t-panel: var(--t-raised);
 
-  /* Hairlines. */
-  --t-line: oklch(100% 0 0 / 8%);
-  --t-line-strong: oklch(100% 0 0 / 14%);
+  /* Hairlines: between surfaces; round a control. */
+  --t-line: #343535;
+  --t-line-strong: #4b4d4c;
 
-  /* Text. */
-  --t-fg: oklch(100% 0 0 / 92%);
-  --t-fg-2: oklch(100% 0 0 / 64%);
-  --t-muted: oklch(100% 0 0 / 46%);
+  /* Secondary text stays readable on raised controls as well as the canvas.
+     Faint is for marks and disabled things, never words to be read. */
+  --t-fg: #f1f0eb;
+  --t-fg-2: #c0c1bc;
+  --t-muted: #989c98;
+  --t-faint: #6e726e;
 
-  /* Accent is user-chosen; this is the default (orange). */
-  --t-accent: oklch(72% 0.19 50);
-  --t-on-accent: oklch(14% 0.004 270);
-  --t-danger: oklch(66% 0.21 15);
-  --t-ok: oklch(76% 0.16 160);
+  /* Offwhite identifies actions and focus. Red is reserved for errors
+     and destructive actions. Capture is described without status LEDs. */
+  --t-accent: #e4e5df;
+  --t-accent-hover: #f4f5ef;
+  --t-on-accent: #181a18;
+  --t-danger: #f26d5f;
+  --t-ok: #d5d7ce;
+  --t-warn: #e8b23a;
+  --t-signal-ok: var(--t-ok);
+  --t-signal-bad: var(--t-danger);
 
-  /* Radii encode nesting: surface > card > control > chip. */
-  --t-radius-chip: 4px;
-  --t-radius-ctl: 6px;
-  --t-radius-card: 8px;
-  --t-radius-surface: 12px;
+  /* Tight corners on media and controls; the workspace has no enclosure. */
+  --t-radius-chip: 2px;
+  --t-radius-ctl: 3px;
+  --t-radius-frame: 4px;
+  --t-radius-overlay: 4px;
+  --t-radius-surface: 4px;
+  --t-radius-workspace: 0px;
 
-  /* One shadow, for floating overlays only. */
-  --t-shadow-overlay: 0 8px 24px oklch(0% 0 0 / 40%);
+  /* Elevation: only what leaves the page (a menu, a dialog) has a shadow. */
+  --t-shadow-pop: 0 0 0 1px var(--t-line-strong), 0 2px 6px rgb(0 0 0 / 30%), 0 14px 32px rgb(0 0 0 / 42%);
+  --t-shadow-overlay: 0 8px 24px rgb(0 0 0 / 50%);
+
+  /* Strong ease-out: movement starts at once. */
+  --t-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 
   /* The type roles the popup shares with the app. */
   --t-text-caption: 12px;
   --t-text-caption-line: 16px;
   --t-text-secondary: 13px;
   --t-text-secondary-line: 18px;
-  --t-text-title: 15px;
-  --t-text-title-line: 20px;
+  --t-text-title: 16px;
+  --t-text-title-line: 22px;
 
-  /* Durations: nothing in the library is slower than fast. */
+  /* Durations: a press; anything that enters. Nothing is slower. */
   --t-duration-fast: 120ms;
   --t-duration-normal: 180ms;
 }
+
+/* Settings → Appearance → Theme (prefs.theme on <html>; a settings swatch
+   carries the same attribute to show its colour). A theme swaps only the
+   accent, kept light enough for --t-on-accent text. */
+[data-theme='blue'] { --t-accent: #8db7ff; --t-accent-hover: #b3cdff; }
+[data-theme='mint'] { --t-accent: #86dcb0; --t-accent-hover: #aae8c8; }
+[data-theme='violet'] { --t-accent: #b8a3ff; --t-accent-hover: #d0c2ff; }
+[data-theme='pink'] { --t-accent: #ff9ccb; --t-accent-hover: #ffbddc; }

@@ -67,12 +67,13 @@ where Reruns has to win (docs/ROADMAP.md §1).
   `clip-ipc`, `rerunsctl`), Tauri 2 + Svelte 5 + Tailwind 4 in `app/`,
   GStreamer for capture, encoding and muxing.
 - The UI runs in WebView2 on Windows and WebKitGTK on Linux. The
-  WebKitGTK rules and budgets in docs/DESIGN.md §3 and §5 are binding: the
+  WebKitGTK rules and budgets in docs/PERFORMANCE.md §3 and §5 are binding: the
   app runs next to a game and must never cost it frames.
 - Dark only. No light theme until the app has a reason for one
   (docs/ROADMAP.md §2).
-- The accent color, card size, hover previews and motion are user
-  settings (Settings → Appearance).
+- Hover previews, motion and tags are user settings (Settings →
+  Appearance); the size Copy clip fits under is Settings → Sharing;
+  thumbnail size is in the library's options menu.
 - **Ads are planned**: a free, ad-supported app. `settings.ads` (off by
   default) shows a 728×90 slot under the main view
   (`app/src/lib/AdSlot.svelte`). Future layouts leave room for it. Open:
@@ -92,7 +93,7 @@ where Reruns has to win (docs/ROADMAP.md §1).
 
 - Name: Reruns (formerly clip.sh). Identifier `gg.reruns.app`, CLI
   `rerunsctl`. Icons in `app/src-tauri/icons/`, `app/public/favicon.svg`.
-- Voice: the copy rules in docs/DESIGN.md §2.8. Sentence case, verbs on
+- Voice: the copy rules in docs/DESIGN.md (Copy). Sentence case, verbs on
   buttons, the fewest words that work, no selling or reassurance, toasts
   say what happened. UI copy mostly uses US spelling (Favorites, Color).
 
@@ -103,7 +104,7 @@ where Reruns has to win (docs/ROADMAP.md §1).
   clips.
 - Tested only on the owner's machines (Windows and KDE Plasma 6, NVIDIA).
 - None yet: user counts, testimonials, reviews, press, or measured
-  comparisons with Medal, ShadowPlay or Steam. Numbers in docs/DESIGN.md
+  comparisons with Medal, ShadowPlay or Steam. Numbers in docs/PERFORMANCE.md
   are budgets or third-party measurements, not Reruns results. Do not
   invent any of these.
 

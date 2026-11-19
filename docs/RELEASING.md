@@ -20,7 +20,11 @@ before: unsigned installers, and apps that never look for updates.
    ```
 
 4. The Release workflow builds the Windows and Linux installers and puts
-   them in a **draft** release. Write the notes and publish it.
+   them in a **draft** release. Write the notes and publish it. On Windows,
+   `Reruns-Setup-<version>.exe` is the one to download: Reruns' own setup
+   window (`app/setup`), which runs the NSIS installer it carries silently.
+   That NSIS installer (`Reruns_<version>_x64-setup.exe`) stays on the
+   release because the updater downloads it.
 
 Installed copies find a published release the next time they start, or
 within six hours while running, or straight away with Settings → General

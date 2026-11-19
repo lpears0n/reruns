@@ -234,6 +234,21 @@ pub fn meter_source(source: &AudioSource) -> Result<gst::Element> {
     make_source(&present(source))
 }
 
+/// What a saved device (`id`, and the `name` it had) is in `devices`: the
+/// one with that id, else the only one with that name. Windows gives a
+/// device a new id when its driver recreates it (SteelSeries Sonar does);
+/// a name two devices share matches neither.
+pub fn find_device<'a>(
+    devices: &'a [AudioDevice],
+    id: &str,
+    name: Option<&str>,
+) -> Option<&'a AudioDevice> {
+    devices.iter().find(|d| d.id == id).or_else(|| {
+        let mut named = devices.iter().filter(|d| Some(d.name.as_str()) == name);
+        named.next().filter(|_| named.next().is_none())
+    })
+}
+
 /// `source`, or the default device of its kind if the one it names isn't
 /// connected right now (an unplugged headset must not stop the recording).
 fn present(source: &AudioSource) -> AudioSource {
@@ -321,6 +336,32 @@ mod tests {
         for d in output_devices() {
             println!("out: {} — {}", d.id, d.name);
         }
+    }
+
+    #[test]
+    fn saved_devices_are_found_by_id_then_unique_name() {
+        let dev = |id: &str, name: &str| AudioDevice {
+            id: id.into(),
+            name: name.into(),
+        };
+        let devices = [
+            dev("{new-stream}", "SteelSeries Sonar - Stream"),
+            dev("{speakers}", "Speakers"),
+            dev("{hdmi-1}", "HDMI Audio"),
+            dev("{hdmi-2}", "HDMI Audio"),
+        ];
+        let found = |id, name| find_device(&devices, id, name).map(|d| d.id.as_str());
+        // By id, whatever the name says.
+        assert_eq!(found("{speakers}", Some("Old name")), Some("{speakers}"));
+        // A new id, the same unique name.
+        assert_eq!(
+            found("{old-stream}", Some("SteelSeries Sonar - Stream")),
+            Some("{new-stream}")
+        );
+        // A name two devices share, an unknown one, or none: no match.
+        assert_eq!(found("{old-hdmi}", Some("HDMI Audio")), None);
+        assert_eq!(found("{old}", Some("Headset")), None);
+        assert_eq!(found("{old}", None), None);
     }
 
     #[test]

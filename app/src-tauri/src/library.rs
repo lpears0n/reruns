@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use clip_core::{export::Slow, gst::ClockTime};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,6 +39,9 @@ pub struct Clip {
     /// the sources' own tracks follow it, and are what the editor's levels
     /// set.
     pub mixed_audio: bool,
+    /// The moment picked as the clip's picture, in seconds from the start;
+    /// `thumbnail` is that frame when set.
+    pub cover: Option<f64>,
 }
 
 /// Saved next to each clip as `<clip>.mp4.json`. The folder stays the
@@ -60,6 +64,9 @@ pub struct ClipMeta {
     /// own tracks follow (recordings with game audio and a mic).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub mixed_audio: bool,
+    /// The moment picked in the viewer as the clip's picture, in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover: Option<f64>,
 }
 
 /// What the UI may change on a clip; `None` leaves a field alone.
@@ -69,6 +76,8 @@ pub struct MetaPatch {
     pub title: Option<String>,
     pub favorite: Option<bool>,
     pub labels: Option<Vec<String>>,
+    /// A negative value clears it.
+    pub cover: Option<f64>,
 }
 
 const MAX_TITLE: usize = 120;
@@ -99,6 +108,9 @@ impl ClipMeta {
                 }
             }
             self.labels = out;
+        }
+        if let Some(c) = patch.cover {
+            self.cover = (c.is_finite() && c >= 0.0).then_some(c);
         }
     }
 }
@@ -142,15 +154,27 @@ pub fn update_meta(clips_dir: &Path, path: &Path, patch: MetaPatch) -> Result<Cl
     if !target.starts_with(&root) || target.extension().is_none_or(|e| e != "mp4") {
         bail!("not a library clip: {}", path.display());
     }
-    let mut meta = read_meta(&target).unwrap_or_else(|| ClipMeta {
-        game: target
-            .parent()
-            .and_then(Path::file_name)
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        ..Default::default()
-    });
-    meta.apply(patch);
+    let read = || {
+        read_meta(&target).unwrap_or_else(|| ClipMeta {
+            game: target
+                .parent()
+                .and_then(Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            ..Default::default()
+        })
+    };
+    let mut meta = read();
+    let cover = meta.cover;
+    meta.apply(patch.clone());
+    if let Some(at) = meta.cover.filter(|_| meta.cover != cover) {
+        // Before the sidecar names it: a frame that can't be read leaves the
+        // clip as it was. The decode takes a while, so the patch then goes
+        // onto the sidecar as it is now, not over a change saved meanwhile.
+        make_cover(path, at)?;
+        meta = read();
+        meta.apply(patch);
+    }
     write_meta(&target, &meta)?;
     let game = meta.game.clone();
     // Under the path the page knows it by: the canonical one can differ
@@ -159,25 +183,37 @@ pub fn update_meta(clips_dir: &Path, path: &Path, patch: MetaPatch) -> Result<Cl
     load(path, &game)
 }
 
-/// Give a rendered edit the same metadata as its source.
 /// Give an edit of `from` covering `start..end` (seconds) the same
-/// metadata, with the markers moved onto the edit's own timeline.
-pub fn copy_meta(from: &Path, to: &Path, start: f64, end: f64) {
+/// metadata, with markers and cover moved onto the edit's own timeline.
+/// `slow`: the export's slow-motion range, already clamped to the trim.
+pub fn copy_meta(from: &Path, to: &Path, start: f64, end: f64, slow: Option<Slow>) {
     if let Some(mut m) = read_meta(from) {
-        m.markers = trim_markers(&m.markers, start, end);
+        m.markers = trim_markers(&m.markers, start, end, slow);
+        m.cover = m
+            .cover
+            .filter(|c| (start..=end).contains(c))
+            .map(|c| edit_time(c, start, slow));
         // An edit has one audio track, already mixed at the chosen levels.
         m.mixed_audio = false;
         let _ = write_meta(to, &m);
     }
 }
 
-/// The markers inside `start..=end`, relative to `start`.
-fn trim_markers(markers: &[f64], start: f64, end: f64) -> Vec<f64> {
+/// The markers inside `start..=end`, on the edit's timeline.
+fn trim_markers(markers: &[f64], start: f64, end: f64, slow: Option<Slow>) -> Vec<f64> {
     markers
         .iter()
         .filter(|&&m| m >= start && m <= end)
-        .map(|&m| m - start)
+        .map(|&m| edit_time(m, start, slow))
         .collect()
+}
+
+/// Where source second `t` plays in an edit starting at `start`: slow
+/// motion stretches its range and moves everything after it later.
+fn edit_time(t: f64, start: f64, slow: Option<Slow>) -> f64 {
+    let Some(slow) = slow else { return t - start };
+    let at = ClockTime::from_nseconds((t.max(0.0) * 1e9) as u64);
+    slow.map(at).nseconds() as f64 / 1e9 - start
 }
 
 #[derive(Serialize, Deserialize)]
@@ -192,8 +228,8 @@ pub fn cache_dir() -> PathBuf {
         .join("reruns/thumbs")
 }
 
-/// A clip file found on disk, without decoding it.
-#[derive(Debug, Clone)]
+/// A clip or screenshot file found on disk, without decoding it.
+#[derive(Debug, Clone, Serialize)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub game: String,
@@ -204,6 +240,17 @@ pub struct FileEntry {
 
 /// Every `<clips_dir>/<game>/*.mp4`, cheaply (metadata only).
 pub fn scan(clips_dir: &Path) -> Vec<FileEntry> {
+    scan_ext(clips_dir, "mp4")
+}
+
+/// Screenshots (`<clips_dir>/<game>/*.png`), newest first.
+pub fn screenshots(clips_dir: &Path) -> Vec<FileEntry> {
+    let mut shots = scan_ext(clips_dir, "png");
+    shots.sort_by_key(|s| std::cmp::Reverse(s.modified_ms));
+    shots
+}
+
+fn scan_ext(clips_dir: &Path, ext: &str) -> Vec<FileEntry> {
     let mut out = Vec::new();
     let Ok(games) = std::fs::read_dir(clips_dir) else {
         return out;
@@ -219,7 +266,7 @@ pub fn scan(clips_dir: &Path) -> Vec<FileEntry> {
         };
         for f in files.flatten() {
             let path = f.path();
-            if path.extension().is_none_or(|e| e != "mp4") {
+            if path.extension().is_none_or(|e| e != ext) {
                 continue;
             }
             let Ok(meta) = f.metadata() else { continue };
@@ -267,7 +314,7 @@ pub fn list(clips_dir: &Path) -> Vec<Clip> {
 }
 
 /// Bumped whenever the generated images change shape or format.
-const THUMB_VERSION: u32 = 3;
+const THUMB_VERSION: u32 = 4;
 
 /// Cache files for a clip, keyed by path + size + mtime (so a rewritten
 /// file gets new images) and the generator version. The image extension
@@ -276,6 +323,17 @@ struct CacheFiles {
     thumb: PathBuf,
     sprite: PathBuf,
     info: PathBuf,
+}
+
+impl CacheFiles {
+    /// The picked cover at `at` seconds: named by the moment, so a new pick
+    /// is a new picture to the page rather than a stale cached one.
+    fn cover(&self, at: f64) -> PathBuf {
+        let stem = self.thumb.file_stem().unwrap_or_default().to_string_lossy();
+        let ext = self.thumb.extension().unwrap_or_default().to_string_lossy();
+        self.thumb
+            .with_file_name(format!("{stem}.at{}.{ext}", (at * 1000.0).round() as u64))
+    }
 }
 
 fn cache_files(path: &Path, size: u64, created_ms: u64, ext: &str) -> CacheFiles {
@@ -313,9 +371,13 @@ pub fn load(path: &Path, game: &str) -> Result<Clip> {
     let info = std::fs::read_to_string(&files.info)
         .ok()
         .and_then(|s| serde_json::from_str::<CachedInfo>(&s).ok());
-    let has_images = files.thumb.exists() && files.sprite.exists();
-
     let user = read_meta(path).unwrap_or_default();
+    let cover = user.cover.map(|at| files.cover(at));
+    // A picked cover not made here yet (the cache was cleared, the folder
+    // came from another machine) counts as missing, so the pool makes it.
+    let has_images =
+        files.thumb.exists() && files.sprite.exists() && cover.as_ref().is_none_or(|c| c.exists());
+
     Ok(Clip {
         path: path.to_owned(),
         game: game.to_owned(),
@@ -329,7 +391,7 @@ pub fn load(path: &Path, game: &str) -> Result<Clip> {
         audio_tracks: info.as_ref().map(|c| c.audio_tracks).unwrap_or(0),
         is_edit: is_edit(path),
         steam_app_id: user.steam_app_id,
-        thumbnail: has_images.then(|| files.thumb.clone()),
+        thumbnail: has_images.then(|| cover.unwrap_or_else(|| files.thumb.clone())),
         sprite: has_images.then(|| files.sprite.clone()),
         sprite_frames: clip_core::media::SPRITE_FRAMES,
         title: user.title,
@@ -337,6 +399,7 @@ pub fn load(path: &Path, game: &str) -> Result<Clip> {
         labels: user.labels,
         markers: user.markers,
         mixed_audio: user.mixed_audio,
+        cover: user.cover,
     })
 }
 
@@ -354,12 +417,42 @@ pub fn generate(path: &Path) -> Result<()> {
     std::fs::create_dir_all(cache_dir())?;
     std::fs::write(&files.thumb, &info.thumbnail)?;
     std::fs::write(&files.sprite, &info.sprite)?;
+    if let Some(at) = read_meta(path).and_then(|m| m.cover)
+        && let Err(e) = make_cover(path, at)
+    {
+        // The usual frame instead, so the clip isn't left without a picture.
+        tracing::warn!("cover of {}: {e:#}", path.display());
+        std::fs::write(files.cover(at), &info.thumbnail)?;
+    }
     let c = CachedInfo {
         duration: info.duration.seconds_f64(),
         audio_tracks: info.audio_tracks,
     };
     std::fs::write(&files.info, serde_json::to_string(&c)?)?;
     Ok(())
+}
+
+/// The frame at `at` seconds as the clip's picture, made once.
+fn make_cover(path: &Path, at: f64) -> Result<()> {
+    let (size_bytes, created_ms) = file_times(path)?;
+    let file = cache_files(path, size_bytes, created_ms, image_ext()).cover(at);
+    if !file.exists() {
+        std::fs::create_dir_all(cache_dir())?;
+        clip_core::save::write_atomic(&file, &clip_core::media::thumbnail_at(path, at)?)?;
+    }
+    Ok(())
+}
+
+/// A screenshot at card size, made on first request and cached like clip
+/// thumbnails (keyed by path, size and time).
+pub fn screenshot_thumb(path: &Path) -> Result<PathBuf> {
+    let (size_bytes, created_ms) = file_times(path)?;
+    let thumb = cache_files(path, size_bytes, created_ms, image_ext()).thumb;
+    if !thumb.exists() {
+        std::fs::create_dir_all(cache_dir())?;
+        clip_core::save::write_atomic(&thumb, &clip_core::media::image_thumbnail(path)?)?;
+    }
+    Ok(thumb)
 }
 
 /// Where to render an edit of `source`: next to it when it's in the library,
@@ -392,12 +485,12 @@ pub fn edit_path(clips_dir: &Path, source: &Path) -> PathBuf {
     }
 }
 
-/// Delete a clip (to the desktop trash if `use_trash`), refusing anything
-/// outside the clips folder.
+/// Delete a clip or screenshot (to the desktop trash if `use_trash`),
+/// refusing anything else and anything outside the clips folder.
 pub fn delete(clips_dir: &Path, path: &Path, use_trash: bool) -> Result<()> {
     let root = clips_dir.canonicalize().context("clips folder missing")?;
     let target = path.canonicalize().context("clip not found")?;
-    if !target.starts_with(&root) || target.extension().is_none_or(|e| e != "mp4") {
+    if !target.starts_with(&root) || target.extension().is_none_or(|e| e != "mp4" && e != "png") {
         bail!("not a clip: {}", path.display());
     }
     let _ = std::fs::remove_file(meta_path(&target));
@@ -431,10 +524,12 @@ mod tests {
                 "".into(),
                 "funny".into(),
             ]),
+            cover: Some(7.25),
         });
         assert_eq!(m.title.as_deref(), Some("Ace"));
         assert!(m.favorite);
         assert_eq!(m.labels, ["clutch", "funny"]);
+        assert_eq!(m.cover, Some(7.25));
 
         // Untouched fields stay; an empty title clears it.
         m.apply(MetaPatch {
@@ -444,6 +539,14 @@ mod tests {
         assert_eq!(m.title, None);
         assert!(m.favorite);
         assert_eq!(m.labels, ["clutch", "funny"]);
+        assert_eq!(m.cover, Some(7.25));
+
+        // A negative cover clears it.
+        m.apply(MetaPatch {
+            cover: Some(-1.0),
+            ..Default::default()
+        });
+        assert_eq!(m.cover, None);
     }
 
     #[test]
@@ -460,8 +563,11 @@ mod tests {
 
     #[test]
     fn markers_follow_the_trim() {
-        assert_eq!(trim_markers(&[1.0, 4.5, 9.0, 12.0], 4.0, 10.0), [0.5, 5.0]);
-        assert!(trim_markers(&[1.0], 2.0, 3.0).is_empty());
+        assert_eq!(
+            trim_markers(&[1.0, 4.5, 9.0, 12.0], 4.0, 10.0, None),
+            [0.5, 5.0]
+        );
+        assert!(trim_markers(&[1.0], 2.0, 3.0, None).is_empty());
 
         let dir = std::env::temp_dir().join(format!("reruns-markers-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -470,19 +576,55 @@ mod tests {
             game: "Hades".into(),
             markers: vec![3.0, 8.0],
             mixed_audio: true,
+            cover: Some(4.5),
             ..Default::default()
         };
         write_meta(&src, &m).unwrap();
-        copy_meta(&src, &out, 2.0, 6.0);
+        copy_meta(&src, &out, 2.0, 6.0, None);
         let copied = read_meta(&out).unwrap();
         assert_eq!(copied.game, "Hades");
         assert_eq!(copied.markers, [1.0]);
+        // The cover moves with the trim, and goes when trimmed away.
+        assert_eq!(copied.cover, Some(2.5));
+        copy_meta(&src, &out, 5.0, 6.0, None);
+        assert_eq!(read_meta(&out).unwrap().cover, None);
+        // Seconds 2-4 at half speed: a marker inside lands twice as far in,
+        // and the cover and marker after it two seconds later.
+        let slow = Slow {
+            from: ClockTime::from_seconds(2),
+            to: ClockTime::from_seconds(4),
+            factor: 2.0,
+        };
+        copy_meta(&src, &out, 0.0, 10.0, Some(slow));
+        let slowed = read_meta(&out).unwrap();
+        assert_eq!(slowed.markers, [4.0, 10.0]);
+        assert_eq!(slowed.cover, Some(6.5));
+        copy_meta(&src, &out, 2.0, 6.0, None);
         // The recording starts with game and mic mixed; an edit has one
         // track, already mixed.
         std::fs::write(&src, b"x").unwrap();
         clip_core::init().unwrap(); // `load` asks GStreamer for the image format
         assert!(load(&src, "Hades").unwrap().mixed_audio);
         assert!(!copied.mixed_audio);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn screenshots_are_listed_and_deleted_but_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("reruns-shots-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Hades")).unwrap();
+        for f in ["shot.png", "clip.mp4", "notes.txt"] {
+            std::fs::write(dir.join("Hades").join(f), b"x").unwrap();
+        }
+        let shots = screenshots(&dir);
+        assert_eq!(shots.len(), 1);
+        assert_eq!(
+            (shots[0].game.as_str(), shots[0].path.file_name().unwrap()),
+            ("Hades", "shot.png".as_ref())
+        );
+        assert!(delete(&dir, &dir.join("Hades/notes.txt"), false).is_err());
+        delete(&dir, &dir.join("Hades/shot.png"), false).unwrap();
+        assert!(screenshots(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

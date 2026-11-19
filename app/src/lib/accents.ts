@@ -1,15 +1,20 @@
-// The accent colours the Appearance settings offer. Plain data in a file
-// of its own: the in-game popup page reads it too, and importing it from
-// prefs.svelte.ts made that page load the whole Svelte runtime.
+// A colour per game: it tints the game's initial in the rail when there is
+// no picture of it, and supplies ambient light until artwork can be sampled.
 
-// OKLCH so every accent has the same lightness and a capped chroma (≤ 0.2):
-// none of them glares on the dark surfaces, and dark text reads on all.
-export const ACCENTS = {
-  orange: { label: 'Orange', css: 'oklch(72% 0.19 50)' },
-  blue: { label: 'Blue', css: 'oklch(70% 0.16 250)' },
-  green: { label: 'Green', css: 'oklch(74% 0.17 155)' },
-  pink: { label: 'Pink', css: 'oklch(68% 0.2 5)' },
-  purple: { label: 'Purple', css: 'oklch(70% 0.15 295)' },
-  yellow: { label: 'Yellow', css: 'oklch(82% 0.16 90)' },
-} as const
-export type Accent = keyof typeof ACCENTS
+/** Chosen by hand; a game whose name starts with one of these gets it. */
+const KNOWN: [string, string][] = [
+  ['elden ring', '#D4A853'],
+  ['counter-strike 2', '#E08E45'],
+  ['hades ii', '#38B28B'],
+  ['overwatch', '#F99E1A'],
+]
+
+/** Any other game: a hue from its name, as light and as strong as those. */
+export function gameAccent(name: string): string {
+  const key = name.trim().toLowerCase()
+  const known = KNOWN.find(([start]) => key.startsWith(start))
+  if (known) return known[1]
+  let hash = 0
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0
+  return `oklch(76% 0.11 ${hash % 360})`
+}

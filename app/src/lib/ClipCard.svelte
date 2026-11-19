@@ -1,49 +1,74 @@
+<!--
+  A saved moment: the picture and its caption form one item. Actions appear
+  over the picture when it is in use, leaving its identity room to breathe.
+  The same actions remain reachable by keyboard and visible on touch.
+-->
 <script lang="ts">
-  import { Check, Clapperboard, Copy, FolderOpen, Scissors, Star, Trash2 } from '@lucide/svelte'
+  import { Check, Copy, Ellipsis, Star } from '@lucide/svelte'
   import { type Clip, fileUrl, videoUrl } from './api'
-  import { duration, when } from './format'
+  import { clock, duration, gameName, when } from './format'
   import { prefs } from './prefs.svelte'
   import { dragOut } from './share'
+  import { noteOpen } from './continuity'
 
   let {
     clip,
-    fallback = clip.game,
-    subtitle = when(clip.created_ms),
+    showGame = true,
+    timeOf = clock,
     selectable = false,
     selected = false,
+    copying = false,
+    copied = false,
+    copyProgress = null,
+    copyBlocked = false,
     onopen,
     ondelete,
-    onshare,
     oncopy,
     onselect,
+    onmenu,
     onfavorite,
   }: {
     clip: Clip
-    /** Shown when the clip has no title: the game name, or the time on game pages. */
-    fallback?: string
-    subtitle?: string
+    /** Name the game; off where the list is one game's. */
+    showGame?: boolean
+    /** Its time, as much as the section heading above leaves unsaid. */
+    timeOf?: (ms: number) => string
     /** Selection mode: clicking toggles selection instead of opening. */
     selectable?: boolean
     selected?: boolean
+    copying?: boolean
+    copied?: boolean
+    /** A large clip being prepared to copy: how far, 0 to 1, along the foot line. */
+    copyProgress?: number | null
+    copyBlocked?: boolean
     onopen: () => void
     ondelete: () => void
-    onshare: () => void
-    /** Put the clip on the clipboard as a file. */
+    /** Put the clip's file on the clipboard. */
     oncopy: () => void
-    onselect?: () => void
-    /** Absent for clips outside the library, which can't be starred. */
+    /** Pick it (Ctrl-click starts picking; `range`: Shift-click, up to here). */
+    onselect?: (range: boolean) => void
+    /** Its context menu, at this point of the window. */
+    onmenu?: (x: number, y: number) => void
+    /** Absent for clips outside the library, which can't be favorites. */
     onfavorite?: () => void
   } = $props()
 
-  const title = $derived(clip.title ?? fallback)
-
-  // First click arms the delete button, second deletes.
-  let armed = $state(false)
+  const game = $derived(gameName(clip.game))
+  const time = $derived(timeOf(clip.created_ms))
+  // Its title; in a list of every game, the game; in one game's list, where
+  // every card would say the same, when it was saved.
+  const title = $derived(clip.title ?? (showGame ? game : time))
+  /** The second line's left: the game, when the title doesn't already say it. */
+  const subtitle = $derived(clip.title && showGame ? game : '')
 
   // Hovering scrubs the sprite sheet (ten frames, no decoding). With hover
-  // previews on, a muted video takes over after the pointer rests a moment.
+  // previews on, a muted video takes over after the pointer rests a moment:
+  // one decoder, for the one card under the pointer.
   let hovering = $state(false)
   let frame = $state(0)
+  /** Where the pointer is across the picture, 0 to 1: the line along its
+   *  bottom edge. */
+  let across = $state(0)
   let previewing = $state(false)
   let previewTimer: ReturnType<typeof setTimeout>
 
@@ -55,9 +80,10 @@
   }
 
   function scrub(e: PointerEvent) {
-    if (!clip.sprite) return
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
+    across = x
+    if (!clip.sprite) return
     frame = Math.min(clip.sprite_frames - 1, Math.floor(x * clip.sprite_frames))
     // Moving the pointer means the user is scrubbing, not waiting for video.
     clearTimeout(previewTimer)
@@ -70,49 +96,60 @@
     clearTimeout(previewTimer)
     hovering = false
     previewing = false
-    armed = false
   }
 
-  function activate() {
-    if (selectable) onselect?.()
-    else onopen()
+  let frameEl: HTMLDivElement | undefined = $state()
+  function activate(e: MouseEvent) {
+    if (selectable || e.ctrlKey || e.metaKey || e.shiftKey) onselect?.(e.shiftKey)
+    else {
+      if (frameEl) noteOpen(clip.path, frameEl)
+      onopen()
+    }
+  }
+
+  /** Marked moments along the picture's foot, where they are in the clip. */
+  const moments = $derived(clip.duration ? clip.markers.filter((m) => m >= 0 && m <= clip.duration!).map((m) => m / clip.duration!) : [])
+
+  function menu(e: MouseEvent) {
+    if (!onmenu) return
+    e.preventDefault()
+    // From the keyboard there is no pointer: open it on the card.
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const keyboard = e.clientX === 0 && e.clientY === 0
+    onmenu(keyboard ? r.left + 24 : e.clientX, keyboard ? r.top + 24 : e.clientY)
   }
 
   $effect(() => () => clearTimeout(previewTimer))
+
+  /** The thumbnail that failed to load (its file is gone): the frame stays plain. */
+  let missing = $state<string | null>(null)
+
+  // The time always sits at the end of the first line, so a row's times
+  // line up; the second line is what else is true of the clip.
+  /** Everything the one caption line says, for its tooltip. */
+  const details = $derived([title, subtitle, clip.is_edit && 'Trimmed', moments.length && `${moments.length} marked`, title !== time && when(clip.created_ms)].filter(Boolean).join(', '))
+
+  function more(e: MouseEvent) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    onmenu?.(r.right, r.bottom + 4)
+  }
 </script>
 
-<div class="group cv-auto min-w-0">
-  <div
-    class="relative aspect-video cursor-pointer overflow-hidden rounded-card bg-panel ring-1 transition-shadow duration-fast ring-inset focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none
-      {selected ? 'ring-2 ring-accent' : 'ring-line hover:ring-line-strong'}"
-    onclick={activate}
-    onkeydown={(e) => e.key === 'Enter' && activate()}
-    draggable={!selectable}
-    ondragstart={(e) => {
-      // Out of the window as a real file: drop it into Discord or a folder.
-      e.preventDefault()
-      dragOut(clip.path)
-    }}
-    onpointerenter={enter}
-    onpointermove={scrub}
-    onpointerleave={leave}
-    role="button"
-    tabindex="0"
-    aria-pressed={selectable ? selected : undefined}
-    aria-label="{selectable ? 'Select' : 'Open'} {clip.game} clip from {when(clip.created_ms)}"
-  >
-    {#if clip.thumbnail}
+<!-- Every card is the same height: the grid counts on it (VirtualGrid). -->
+<!-- svelte-ignore a11y_no_static_element_interactions (the context menu is also on the button inside, by keyboard) -->
+<div class="card media-card group min-w-0" oncontextmenu={menu} data-clip-path={clip.path}>
+  <!-- svelte-ignore a11y_no_static_element_interactions (hover scrubbing only; the button below is the control) -->
+  <div bind:this={frameEl} class="frame media-visual aspect-video {selected ? 'is-selected outline-2 outline-offset-2 outline-accent' : ''}" onpointerenter={enter} onpointermove={scrub} onpointerleave={leave}>
+    {#if clip.thumbnail && clip.thumbnail !== missing}
       <img
         src={fileUrl(clip.thumbnail)}
         alt=""
         loading="lazy"
+        decoding="async"
         draggable="false"
         class="size-full object-cover"
+        onerror={() => (missing = clip.thumbnail)}
       />
-    {:else}
-      <div class="thumb-empty flex size-full items-center justify-center text-muted/50">
-        <Clapperboard size={20} strokeWidth={1.6} />
-      </div>
     {/if}
 
     {#if hovering && clip.sprite && !previewing}
@@ -139,89 +176,210 @@
       ></video>
     {/if}
 
-    <span class="absolute right-2 bottom-2 rounded-chip bg-black/70 px-1.5 py-0.5 text-caption font-medium text-white tabular-nums">
-      {duration(clip.duration)}
-    </span>
-    {#if clip.is_edit}
-      <span class="absolute bottom-2 left-2 rounded-chip bg-black/70 p-1 text-fg-2" title="Edited clip">
-        <Scissors size={12} />
-      </span>
+    {#if clip.duration != null}
+      <!-- How long it is; nothing is shown for a clip not measured yet. -->
+      <span class="media-duration absolute right-2 bottom-2 bg-black/75 px-1.5 text-caption leading-5 font-medium text-white tabular-nums" aria-hidden="true">{duration(clip.duration)}</span>
     {/if}
 
+    <span class="ring" aria-hidden="true"></span>
     {#if selectable}
-      <span
-        class="absolute top-2 left-2 flex size-6 items-center justify-center rounded-full border-2 transition-colors duration-fast
-          {selected ? 'border-accent bg-accent text-on-accent' : 'border-white/70 bg-black/50 text-transparent'}"
-        aria-hidden="true"
-      >
-        <Check size={14} strokeWidth={3} />
-      </span>
-    {:else}
-      {#if onfavorite}
-        <button
-          class="btn-scrim absolute top-2 left-2 transition-opacity duration-fast
-            {clip.favorite ? 'text-accent' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'}"
-          onclick={(e) => {
-            e.stopPropagation()
-            onfavorite()
-          }}
-          title={clip.favorite ? 'Remove from favourites' : 'Add to favourites'}
-          aria-label={clip.favorite ? 'Remove from favourites' : 'Add to favourites'}
-          aria-pressed={clip.favorite}
-        >
-          <Star size={16} fill={clip.favorite ? 'currentColor' : 'none'} />
+      <span class={['pick', { on: selected }]} aria-hidden="true"><Check size={14} strokeWidth={3} /></span>
+    {/if}
+
+    {#if copying && copyProgress != null}
+      <span class="copy-progress" style:transform="scaleX({Math.min(1, Math.max(0, copyProgress))})" aria-hidden="true"></span>
+    {:else if hovering && !selectable}
+      <!-- Follows the pointer across the picture, by transform. -->
+      <span class="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-accent" style:transform="scaleX({across})" aria-hidden="true"></span>
+    {/if}
+
+    <!-- Independent sibling buttons keep opening, copying and selecting
+         distinct for pointer, keyboard and assistive technology. -->
+    <button
+      class="clip-open media-open absolute inset-0 cursor-pointer rounded-frame focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+      onclick={activate}
+      draggable={!selectable}
+      ondragstart={(e) => {
+        // Out of the window as a real file: drop it into a chat or a folder.
+        e.preventDefault()
+        dragOut(clip.path)
+      }}
+      aria-pressed={selectable ? selected : undefined}
+      aria-keyshortcuts={selectable ? undefined : 'Control+C Delete F'}
+      aria-label="{selectable ? 'Select' : 'Open'} {clip.title ? `${clip.title}, ` : ''}{game} clip from {when(clip.created_ms)}{clip.duration != null ? `, ${duration(clip.duration)}` : ''}{moments.length ? `, ${moments.length} marked moment${moments.length === 1 ? '' : 's'}` : ''}"
+    ></button>
+    {#if !selectable}
+      <div class="media-tools" class:shown={copying || copied}>
+        <!-- One tab stop per card: these act on the focused card by its keys too. -->
+        <!-- Copy, then Copied, in the same width; progress and Cancel for a
+             large clip are in the notice and along the foot line. -->
+        <button class="clip-copy media-tool" tabindex="-1" onclick={oncopy} disabled={copyBlocked && !copying} aria-busy={copying} aria-label="Copy clip" title={copied ? 'Copied' : 'Copy clip (Ctrl+C)'}>
+          {#if copied}<Check size={14} />{:else}<Copy size={14} />{/if}
+          <span class="copy-word"><span>{copied ? 'Copied' : 'Copy'}</span></span>
         </button>
-      {/if}
-      <div class="absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100">
-        <button
-          class="btn-scrim"
-          onclick={(e) => {
-            e.stopPropagation()
-            oncopy()
-          }}
-          title="Copy"
-          aria-label="Copy clip"
-        >
-          <Copy size={16} />
-        </button>
-        <button
-          class="btn-scrim"
-          onclick={(e) => {
-            e.stopPropagation()
-            onshare()
-          }}
-          title="Show in folder"
-          aria-label="Show in folder"
-        >
-          <FolderOpen size={16} />
-        </button>
-        <button
-          class="btn-scrim {armed ? 'bg-danger text-white hover:bg-danger' : ''}"
-          onclick={(e) => {
-            e.stopPropagation()
-            if (armed) ondelete()
-            else armed = true
-          }}
-          title={armed ? 'Click again to delete' : 'Delete'}
-          aria-label={armed ? 'Confirm delete' : 'Delete'}
-        >
-          <Trash2 size={16} />
-        </button>
+        {#if onmenu}
+          <button class="media-tool media-more" tabindex="-1" onclick={more} aria-label="Clip actions" aria-haspopup="menu" title="Clip actions"><Ellipsis size={16} /></button>
+        {/if}
       </div>
     {/if}
   </div>
-  <div class="mt-2 flex items-baseline justify-between gap-3 px-0.5">
-    <span class="display-face truncate text-body font-semibold" title={clip.title ? fallback : undefined}>{title}</span>
-    <span class="flex-none text-caption text-muted tabular-nums">{subtitle}</span>
+
+  <!-- Moments marked while playing (F7), where they fall in the clip: the
+       same diamonds as on the viewer's timeline, under the picture's foot,
+       where the scrub line runs. Every card keeps the room, marks or not. -->
+  <div class="moments media-visual" aria-hidden="true">
+    {#each moments as m, i (i)}<i style:left="{m * 100}%"></i>{/each}
   </div>
-  {#if clip.labels.length}
-    <div class="mt-1.5 flex flex-wrap gap-1 px-0.5">
-      {#each clip.labels.slice(0, 3) as l (l)}
-        <span class="chip">{l}</span>
-      {/each}
-      {#if clip.labels.length > 3}
-        <span class="chip" title={clip.labels.slice(3).join(', ')}>+{clip.labels.length - 3}</span>
-      {/if}
-    </div>
-  {/if}
+  <!-- One line: a name the user gave stands out; an unnamed clip is quiet.
+       The game gives way before the title; marks are the diamonds above. -->
+  <div class="card-caption" title={details}>
+    <div class="card-title truncate" class:named={!!clip.title}>{title}</div>
+    {#if subtitle}<span class="caption-game truncate">{subtitle}</span>{/if}
+    {#if clip.is_edit}<span class="caption-flag">Trimmed</span>{/if}
+    {#if clip.favorite && !selectable}
+      <Star size={11} fill="currentColor" class="favorite-mark flex-none text-fg-2" aria-hidden="true" />
+    {/if}
+    {#if title !== time}<span class="caption-time truncate text-muted tabular-nums">{time}</span>{/if}
+  </div>
 </div>
+
+<style>
+  .card {
+    container-type: inline-size;
+  }
+
+  .frame { border-radius: 4px; }
+  .media-open { border-radius: inherit; }
+  .media-duration { border-radius: 2px; }
+
+  .card-caption {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    height: 20px;
+    line-height: 20px;
+  }
+
+  .card-title { flex: 0 1 auto; min-width: 0; color: var(--color-fg-2); }
+  .card-title.named { color: var(--color-fg); font-weight: 600; }
+  /* Gives way long before the title does; a card too narrow for both keeps
+     the name the user gave (the game stays in the tooltip). */
+  .caption-game { flex: 0 1000 auto; min-width: 0; color: var(--color-muted); font-size: var(--text-secondary); }
+  @container (width < 300px) { .caption-game { display: none; } }
+  .caption-flag { flex: none; color: var(--color-muted); font-size: var(--text-caption); }
+  /* Last, room permitting: in a narrow card a long time ("Yesterday,
+     11:00 PM") takes at most half the line and ends in an ellipsis. */
+  .caption-time { margin-left: auto; flex: none; max-width: 50%; padding-left: 8px; font-size: 12px; }
+
+  /* Marked moments: small white diamonds standing on the picture's foot. */
+  .moments {
+    position: relative;
+    height: 12px;
+    margin: 0 4px;
+    pointer-events: none;
+  }
+
+  .moments:has(i)::before {
+    content: '';
+    position: absolute;
+    inset: 4px 0 auto;
+    height: 1px;
+    background: var(--color-line-strong);
+  }
+
+  .moments i {
+    position: absolute;
+    top: 1px;
+    width: 6px;
+    height: 6px;
+    border-radius: 1px;
+    background: var(--color-fg-2);
+    outline: 2px solid var(--color-canvas);
+    translate: -50% 0;
+    rotate: 45deg;
+  }
+
+  .card:hover .moments i {
+    background: var(--color-fg);
+  }
+
+  /* A large clip being prepared to copy: the foot line fills. */
+  .copy-progress {
+    position: absolute;
+    inset: auto 0 0;
+    height: 2px;
+    background: var(--color-accent);
+    transform-origin: left;
+    transition: transform 180ms var(--ease-out);
+    pointer-events: none;
+  }
+
+  .ring {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-normal) var(--ease-out);
+  }
+
+  .card:global(.returned) .ring {
+    opacity: 1;
+    transition: none;
+  }
+
+  /* A clip that arrived while the window was away: its picture comes in,
+     then the foot line runs across once and fades (continuity.ts arrive). */
+  .card:global(.arrived) .frame {
+    animation: arrive-frame 160ms var(--ease-out) both;
+  }
+
+  .card:global(.arrived) .frame::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0;
+    height: 2px;
+    background: var(--color-accent);
+    transform-origin: left;
+    pointer-events: none;
+    animation:
+      arrive-line 200ms var(--ease-out) 120ms both,
+      arrive-fade 200ms var(--ease-out) 1100ms forwards;
+  }
+
+  @keyframes arrive-frame { from { opacity: 0; } }
+  @keyframes arrive-line { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  @keyframes arrive-fade { to { opacity: 0; } }
+
+  /* Opacity, not visibility: the card's button inside keeps its focus. */
+  .card:global(.landing) .frame {
+    opacity: 0;
+  }
+
+  .pick {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    background: rgb(0 0 0 / 55%);
+    box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 70%);
+    color: transparent;
+    pointer-events: none;
+    transition:
+      background-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out);
+  }
+
+  .pick.on {
+    background: var(--color-accent);
+    box-shadow: none;
+    color: var(--color-on-accent);
+  }
+</style>

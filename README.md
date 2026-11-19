@@ -4,9 +4,10 @@ An instant replay recorder for games on Windows and Linux, kind of like Medal. I
 
 ## Download
 
-Installers for Windows (`.exe`) and Linux (AppImage, `.deb`, `.rpm`) are on the
-[releases page](https://github.com/lpears0n/reruns/releases). The Windows
-installer bundles everything it needs.
+Installers for Windows and Linux (AppImage, `.deb`, `.rpm`) are on the
+[releases page](https://github.com/lpears0n/reruns/releases). On Windows,
+download `Reruns-Setup-<version>.exe`; it bundles everything it needs. The
+other `.exe` there is the update package the app fetches by itself.
 
 ## How to run it locally
 
@@ -92,7 +93,7 @@ The whole thing is a Cargo workspace: `crates/clip-core` has the capture and enc
 
 It works, but I've mostly tested it on my own machines: Windows and KDE Plasma 6 on Wayland, both with an NVIDIA card.
 
-There's a design and performance guide in [docs/DESIGN.md](docs/DESIGN.md) and a roadmap with the research behind it in [docs/ROADMAP.md](docs/ROADMAP.md):
+The design system is in [docs/DESIGN.md](docs/DESIGN.md), the performance rules and budgets in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), and a roadmap with the research behind it in [docs/ROADMAP.md](docs/ROADMAP.md):
 what's planned for the library and editor, how a Windows port would work
 (GStreamer's Windows Graphics Capture and WASAPI elements, so the ring
 buffer and trimmer carry over), and packaging. CI builds and lints every
@@ -105,7 +106,7 @@ Known problems:
 - **X11 isn't supported.** There's no capture backend for it.
 - **Windows is tested on NVIDIA only.** Game detection, window capture and NVENC zero-copy recording work there; AMD AMF and Intel Quick Sync, and HDR window capture, haven't been run on real hardware. See [docs/WINDOWS.md](docs/WINDOWS.md).
 - **The Windows installer isn't code-signed yet**, so SmartScreen warns on first run.
-- **Storage limits are a soft cap.** Old clips get deleted after a save if you go over, and the Trash option is on by default so you can recover them. Starred and edited clips are kept unless you turn that off in Settings → Storage.
+- **Storage limits are a soft cap.** Old clips get deleted after a save if you go over, and the Trash option is on by default so you can recover them. Favourite and edited clips are kept unless you turn that off in Settings → Storage.
 
 What I'd do next, if I had more time: zero-copy capture for high frame rates (the current path copies every frame through system memory), the `ext-image-copy-capture` protocol for window capture on wlroots desktops, X11 support, and a proper package.
 
