@@ -41,5 +41,9 @@ fn main() {
     ] {
         println!("cargo:rustc-env={var}={}", app[key].as_str().unwrap());
     }
-    tauri_build::build();
+    // tauri is a Windows-only dependency (Cargo.toml), and tauri_build needs
+    // what tauri's own build script reports.
+    if env::var_os("CARGO_CFG_WINDOWS").is_some() {
+        tauri_build::build();
+    }
 }
