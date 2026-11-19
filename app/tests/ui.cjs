@@ -176,6 +176,7 @@ function mockBridge(data) {
     invoke: async (cmd, args) => {
       // In order, so a test can check what the page did first.
       (window.__calls ||= []).push(cmd === 'plugin:event|listen' ? `listen ${args.event}` : cmd)
+      if (cmd === 'open_for_edit') window.__opened = args.path
       if (cmd === 'open_for_edit') return data.list_clips.find((c) => c.path === args.path) || { ...data.list_clips[0], path: args.path }
       if (cmd === 'update_clip') {
         const c = data.list_clips.find((c) => c.path === args.path)
@@ -610,6 +611,15 @@ async function runScenario(scenario, browser) {
     assert.equal(await gameChoice(page, 'Elden Ring').getAttribute('aria-current'), 'page', "and stays on the game's clips")
     assert.match(await page.evaluate(() => document.activeElement.getAttribute('aria-label') ?? ''), /^Open Elden Ring screenshot/, 'focus is back on the card it was opened from')
     await page.screenshot({ path: path.join(out, 'game-screenshots.png') })
+    await shots.first().click()
+    await viewer.waitFor()
+    // A replay saved meanwhile opens from its notice in the screenshot's place.
+    await page.evaluate((p) => window[`_${window.__listeners['clip-saved']}`]({ event: 'clip-saved', id: 1, payload: p }), '/home/u/Videos/Reruns/ELDEN RING/clip-0.mp4')
+    await viewer.getByRole('button', { name: 'Open', exact: true }).click()
+    await page.locator('video').waitFor()
+    assert.equal(await viewer.count(), 0, "the clip takes the screenshot's place")
+    await page.keyboard.press('Escape')
+    assert.equal(await page.locator('video').count(), 0, 'Esc closes the clip')
     // Copied from its card, a screenshot says so there, as a clip does.
     const shotCard = page.locator('.screenshot-card').first()
     await shotCard.hover()
@@ -811,8 +821,16 @@ async function runScenario(scenario, browser) {
   assert.equal(await page.locator('video').count(), 1, 'and leaves the viewer open')
   await seekTo(page, 2.5)
   // Ctrl+C is Copy clip: this one is over the sharing limit, so a smaller copy goes.
+  // The clipboard refuses it at first: Try again copies that copy, without rendering another.
+  await page.evaluate(() => (window.__copyError = 'the clipboard is busy'))
   await page.keyboard.press('Control+c')
+  await dialog.locator('.edit-status').getByText("Couldn't copy the clip: the clipboard is busy").waitFor()
+  await page.evaluate(() => (window.__copyError = null))
+  const renders = () => page.evaluate(() => window.__calls.filter((c) => c === 'render_clip').length)
+  const rendersBefore = await renders()
+  await dialog.getByRole('button', { name: 'Try again' }).click()
   await page.locator('.edit-status').getByText('Clip copied, under 10 MB').waitFor()
+  assert.equal(await renders(), rendersBefore, 'Try again does not render the clip again')
   assert.match(await page.evaluate(() => window.__copied), /_edit\.mp4$/, 'the fitted copy went to copy_clip')
   assert.equal(await page.evaluate(() => window.__lastRender.maxMb), 10, 'fitted under the limit from Settings → Sharing')
   assert.equal(await page.locator('.edit-status').getByText('Clip copied, under 10 MB').evaluate((el) => !!el.closest('[data-deck]')), true, 'said beside the actions')
@@ -1381,11 +1399,24 @@ async function uxScenario(browser) {
   assert.equal(await page.locator('.library-scroll').evaluate((el) => el.scrollTop), scrolled, 'and the scroll')
   await page.getByLabel('Search clips').fill('')
 
-  // "Not a game" can be undone from its notice.
+  // "Not a game" can be undone from its notice. A delete still pending
+  // keeps its Undo in front: the clip comes back first, then the game.
   await selectGame(page, 'Hades II')
+  const hadesCards = await cards()
+  await cardAction(page, page.locator('.clip-grid > .card').first(), 'Delete')
   await choose(page, 'Library actions', 'Hades II is not a game')
-  await page.getByRole('button', { name: 'Undo' }).click()
+  await gameChoice(page, 'Hades II').waitFor({ state: 'detached', timeout: 2000 })
+  await page.waitForTimeout(200)
+  const deleteNotice = page.getByRole('region', { name: 'Notification', exact: true })
+  assert.equal(await deleteNotice.getByText('Clip deleted').count(), 1, "the delete's Undo stays in front")
+  await deleteNotice.getByRole('button', { name: 'Undo' }).click()
+  await deleteNotice.getByText('Ignoring Hades II').waitFor({ timeout: 2000 })
+  await deleteNotice.getByRole('button', { name: 'Undo' }).click()
   await gameChoice(page, 'Hades II').waitFor({ timeout: 2000 })
+  if ((await gameChoice(page, 'Hades II').getAttribute('aria-current')) !== 'page') await selectGame(page, 'Hades II')
+  await page.waitForTimeout(150)
+  assert.equal(await cards(), hadesCards, 'the deleted clip is back as well')
+  await libraryNav.getByRole('button', { name: /^All clips/ }).click()
 
   // Everything fits the narrowest window, and / goes to search.
   await page.setViewportSize({ width: 900, height: 600 })
@@ -1465,6 +1496,35 @@ async function uxScenario(browser) {
   await page.locator('video').waitFor()
   await page.keyboard.press('Escape')
   await page.waitForFunction((path) => document.activeElement?.closest('[data-clip-path]')?.getAttribute('data-clip-path') === path, savedPath)
+  await page.close()
+}
+
+// By play session, Left and Right in the viewer follow the cards as shown:
+// unlogged clips either side of a logged session share their day's section.
+async function sessionOrderScenario(browser) {
+  const data = fixtures('full')
+  const day = new Date()
+  day.setDate(day.getDate() - 1)
+  const at = (hour) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour).getTime()
+  const hades = data.list_games.find((g) => g.name === 'Hades II')
+  hades.sessions = [{ game: hades.name, steam_app_id: hades.steam_app_id, start_ms: at(12), end_ms: at(14) }]
+  data.list_clips.filter((c) => c.game === hades.name).forEach((c, i) => (c.created_ms = at([18, 13, 10][i])))
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' })
+  page.on('pageerror', (e) => { throw new Error(`page error in session order: ${e.message}`) })
+  await page.addInitScript(() => localStorage.setItem('reruns/prefs', JSON.stringify({ groupBy: 'session' })))
+  await page.addInitScript(mockBridge, data)
+  await page.route('http://127.0.0.1:2/**', (r) => r.fulfill({ status: 404 }))
+  await page.goto(`http://localhost:${PORT}/`)
+  await selectGame(page, 'Hades II')
+  const shown = page.locator('main .media-card[data-clip-path]')
+  await shown.first().waitFor()
+  const order = await shown.evaluateAll((els) => els.map((e) => e.getAttribute('data-clip-path')))
+  assert.deepEqual(order.map((p) => p.match(/clip-\d+/)[0]), ['clip-19', 'clip-21', 'clip-20'], 'the day keeps 18:00 and 10:00 together, the session after')
+  await page.locator('.clip-open').first().click()
+  await page.locator('video').waitFor()
+  await page.keyboard.press('ArrowRight')
+  await page.waitForFunction((p) => window.__opened !== p, order[0], { timeout: 2000 })
+  assert.equal(await page.evaluate(() => window.__opened), order[1], 'Next opens the card shown after it')
   await page.close()
 }
 
@@ -1912,6 +1972,8 @@ if (require.main === module) (async () => {
       console.log('ok  startup update')
       await uxScenario(browser)
       console.log('ok  ux')
+      await sessionOrderScenario(browser)
+      console.log('ok  session order')
     }
   } finally {
     await browser.close()

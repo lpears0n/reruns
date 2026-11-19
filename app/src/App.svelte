@@ -215,8 +215,11 @@
   let queued: [Notice, number] | null = null
 
   function showToast(t: Notice, ms = 3000) {
-    // Never take a pending Undo off the screen.
-    if (toast?.action?.label === 'Undo' && t.action?.label !== 'Undo') {
+    // Never take a pending Undo off the screen. Another delete's Undo may
+    // take a delete's place (one Undo covers them all); any other waits,
+    // since the deletes' timers keep running without a way back on screen.
+    const deleting = toast?.action?.run === undo && t.action?.run !== undo
+    if (toast?.action?.label === 'Undo' && (t.action?.label !== 'Undo' || deleting)) {
       queued = [t, ms]
       return
     }
@@ -362,6 +365,8 @@
       // given focus back to its card.
       if (!covered && document.activeElement instanceof HTMLElement) cameFrom = document.activeElement
       viewing = clip
+      // One viewer at a time: a screenshot open in front would hide the clip.
+      shot = null
       queue = from ?? (queue.includes(path) ? queue : [])
     } catch (e) {
       notify(String(e), true)
@@ -411,20 +416,22 @@
    *  it meets the size limit; otherwise a render of the selection, kept in
    *  the library like any saved clip. Says so only once it is there: the
    *  button itself says Copied, and the size it was fitted under is said
-   *  beside it. */
-  async function copyReady(clip: Clip, edit?: Edit, untouched = true) {
+   *  beside it. `prepared`: that render, made already, when only the
+   *  clipboard failed. */
+  async function copyReady(clip: Clip, edit?: Edit, untouched = true, prepared?: string) {
     if (copyBlocked) return
     const job = { path: clip.path, cancelled: false }
     copyJob = job
     copyingPath = clip.path
     const maxMb = limitMb(false)
-    const asIs = untouched && (maxMb === null || clip.size_bytes <= maxMb * 1e6)
-    copyPhase = asIs ? 'copying' : 'preparing'
+    const asIs = !prepared && untouched && (maxMb === null || clip.size_bytes <= maxMb * 1e6)
+    copyPhase = asIs || prepared ? 'copying' : 'preparing'
     renderProgress = 0
-    let path = clip.path
-    const retry = () => copyReady(clip, edit, untouched)
+    let path = prepared ?? clip.path
+    // Reads `path` when called: once the render exists, Try again only copies it.
+    const retry = () => copyReady(clip, edit, untouched, path === clip.path ? undefined : path)
     try {
-      if (!asIs) {
+      if (!asIs && !prepared) {
         try {
           if (!edit) {
             const source = await api.openForEdit(clip.path)
@@ -736,6 +743,7 @@
             label: 'Open',
             run: () => {
               closeToast()
+              viewing = null
               shot = listed()
             },
           },

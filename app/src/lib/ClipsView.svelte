@@ -178,6 +178,10 @@
     return days
   })
 
+  /** The clips in the order their cards are shown, for the viewer's Previous
+   *  and Next: by play session that is not always time order. */
+  const queue = $derived(sections.flatMap((s) => s.items.flatMap((it) => ('clip' in it ? [it.clip.path] : []))))
+
   /** What the header says is listed, including screenshots when visible. */
   const listed = $derived(game ? gameName(game.name) : scope === 'starred' ? 'Favorites' : 'All clips')
   const visibleShots = $derived(byDay && !activeLabel && !query.trim() ? shots.length : 0)
@@ -471,7 +475,7 @@
               copied={copiedPath === clip.path}
               copyProgress={copyingPath === clip.path ? copyProgress : null}
               {copyBlocked}
-              onopen={() => onopen(clip, shown.map((c) => c.path))}
+              onopen={() => onopen(clip, queue)}
               ondelete={() => ondelete(clip)}
               oncopy={() => oncopy(clip)}
               onselect={(range) => toggle(clip, range)}
@@ -512,7 +516,7 @@
 <Popover bind:this={context} label="Clip actions">
   {#if target && 'clip' in target}
     {@const clip = target.clip}
-    <button class="menu-item" role="menuitem" onclick={() => onopen(clip, shown.map((c) => c.path))}>Open</button>
+    <button class="menu-item" role="menuitem" onclick={() => onopen(clip, queue)}>Open</button>
     <button class="menu-item" role="menuitem" disabled={copyBlocked} onclick={() => oncopy(clip)} aria-keyshortcuts="Control+C">Copy clip<span class="menu-key" aria-hidden="true">Ctrl+C</span></button>
     <button class="menu-item" role="menuitem" onclick={() => onfavorite(clip)} aria-keyshortcuts="F">{clip.favorite ? 'Remove from favorites' : 'Add to favorites'}<span class="menu-key" aria-hidden="true">F</span></button>
     <button class="menu-item" role="menuitem" onclick={() => onreveal(clip)}>Show in folder</button>
