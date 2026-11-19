@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use clip_core::{export::Slow, gst::ClockTime};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
@@ -153,20 +154,26 @@ pub fn update_meta(clips_dir: &Path, path: &Path, patch: MetaPatch) -> Result<Cl
     if !target.starts_with(&root) || target.extension().is_none_or(|e| e != "mp4") {
         bail!("not a library clip: {}", path.display());
     }
-    let mut meta = read_meta(&target).unwrap_or_else(|| ClipMeta {
-        game: target
-            .parent()
-            .and_then(Path::file_name)
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        ..Default::default()
-    });
+    let read = || {
+        read_meta(&target).unwrap_or_else(|| ClipMeta {
+            game: target
+                .parent()
+                .and_then(Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            ..Default::default()
+        })
+    };
+    let mut meta = read();
     let cover = meta.cover;
-    meta.apply(patch);
+    meta.apply(patch.clone());
     if let Some(at) = meta.cover.filter(|_| meta.cover != cover) {
         // Before the sidecar names it: a frame that can't be read leaves the
-        // clip as it was.
+        // clip as it was. The decode takes a while, so the patch then goes
+        // onto the sidecar as it is now, not over a change saved meanwhile.
         make_cover(path, at)?;
+        meta = read();
+        meta.apply(patch);
     }
     write_meta(&target, &meta)?;
     let game = meta.game.clone();
@@ -176,29 +183,37 @@ pub fn update_meta(clips_dir: &Path, path: &Path, patch: MetaPatch) -> Result<Cl
     load(path, &game)
 }
 
-/// Give a rendered edit the same metadata as its source.
 /// Give an edit of `from` covering `start..end` (seconds) the same
-/// metadata, with the markers moved onto the edit's own timeline.
-pub fn copy_meta(from: &Path, to: &Path, start: f64, end: f64) {
+/// metadata, with markers and cover moved onto the edit's own timeline.
+/// `slow`: the export's slow-motion range, already clamped to the trim.
+pub fn copy_meta(from: &Path, to: &Path, start: f64, end: f64, slow: Option<Slow>) {
     if let Some(mut m) = read_meta(from) {
-        m.markers = trim_markers(&m.markers, start, end);
+        m.markers = trim_markers(&m.markers, start, end, slow);
         m.cover = m
             .cover
             .filter(|c| (start..=end).contains(c))
-            .map(|c| c - start);
+            .map(|c| edit_time(c, start, slow));
         // An edit has one audio track, already mixed at the chosen levels.
         m.mixed_audio = false;
         let _ = write_meta(to, &m);
     }
 }
 
-/// The markers inside `start..=end`, relative to `start`.
-fn trim_markers(markers: &[f64], start: f64, end: f64) -> Vec<f64> {
+/// The markers inside `start..=end`, on the edit's timeline.
+fn trim_markers(markers: &[f64], start: f64, end: f64, slow: Option<Slow>) -> Vec<f64> {
     markers
         .iter()
         .filter(|&&m| m >= start && m <= end)
-        .map(|&m| m - start)
+        .map(|&m| edit_time(m, start, slow))
         .collect()
+}
+
+/// Where source second `t` plays in an edit starting at `start`: slow
+/// motion stretches its range and moves everything after it later.
+fn edit_time(t: f64, start: f64, slow: Option<Slow>) -> f64 {
+    let Some(slow) = slow else { return t - start };
+    let at = ClockTime::from_nseconds((t.max(0.0) * 1e9) as u64);
+    slow.map(at).nseconds() as f64 / 1e9 - start
 }
 
 #[derive(Serialize, Deserialize)]
@@ -548,8 +563,11 @@ mod tests {
 
     #[test]
     fn markers_follow_the_trim() {
-        assert_eq!(trim_markers(&[1.0, 4.5, 9.0, 12.0], 4.0, 10.0), [0.5, 5.0]);
-        assert!(trim_markers(&[1.0], 2.0, 3.0).is_empty());
+        assert_eq!(
+            trim_markers(&[1.0, 4.5, 9.0, 12.0], 4.0, 10.0, None),
+            [0.5, 5.0]
+        );
+        assert!(trim_markers(&[1.0], 2.0, 3.0, None).is_empty());
 
         let dir = std::env::temp_dir().join(format!("reruns-markers-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -562,15 +580,26 @@ mod tests {
             ..Default::default()
         };
         write_meta(&src, &m).unwrap();
-        copy_meta(&src, &out, 2.0, 6.0);
+        copy_meta(&src, &out, 2.0, 6.0, None);
         let copied = read_meta(&out).unwrap();
         assert_eq!(copied.game, "Hades");
         assert_eq!(copied.markers, [1.0]);
         // The cover moves with the trim, and goes when trimmed away.
         assert_eq!(copied.cover, Some(2.5));
-        copy_meta(&src, &out, 5.0, 6.0);
+        copy_meta(&src, &out, 5.0, 6.0, None);
         assert_eq!(read_meta(&out).unwrap().cover, None);
-        copy_meta(&src, &out, 2.0, 6.0);
+        // Seconds 2-4 at half speed: a marker inside lands twice as far in,
+        // and the cover and marker after it two seconds later.
+        let slow = Slow {
+            from: ClockTime::from_seconds(2),
+            to: ClockTime::from_seconds(4),
+            factor: 2.0,
+        };
+        copy_meta(&src, &out, 0.0, 10.0, Some(slow));
+        let slowed = read_meta(&out).unwrap();
+        assert_eq!(slowed.markers, [4.0, 10.0]);
+        assert_eq!(slowed.cover, Some(6.5));
+        copy_meta(&src, &out, 2.0, 6.0, None);
         // The recording starts with game and mic mixed; an edit has one
         // track, already mixed.
         std::fs::write(&src, b"x").unwrap();

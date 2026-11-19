@@ -665,6 +665,7 @@ async fn render_clip(
     };
     let result = out.clone();
     let source = path.clone();
+    let slow = edit.slow.and_then(|s| s.within(edit.start, edit.end));
     let cancel = state.render_cancel.clone();
     cancel.store(false, Ordering::Relaxed);
     let progress_app = app.clone();
@@ -692,7 +693,7 @@ async fn render_clip(
         .map_err(err)
         .and_then(|r| r.map_err(|e| format!("{e:#}")))
         .map(|()| {
-            library::copy_meta(&source, &result, start, end);
+            library::copy_meta(&source, &result, start, end, slow);
             let _ = app.emit(service::CLIP_SAVED, &result);
             result
         });
