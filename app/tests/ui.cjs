@@ -120,6 +120,8 @@ function worstCase(games, clips, now) {
     markers: [0, 0.2, 1.5, 3.5, 30.9],
     favorite: true,
     is_edit: true,
+    // Yesterday, late: "Yesterday, 11:00 PM" is about the longest time a card says.
+    created_ms: new Date(now).setHours(0, 0, 0, 0) - h,
   })
   Object.assign(clips[2], { title: '<b>&amp; **bold**</b>', created_ms: now - 3 * 365 * 24 * h })
   clips[3].title = 'Benachrichtigungseinstellungen_IMG_20250914_183022_HDR_portrait_edited_edited'

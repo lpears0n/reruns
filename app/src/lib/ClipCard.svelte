@@ -239,7 +239,7 @@
     {#if clip.favorite && !selectable}
       <Star size={11} fill="currentColor" class="favorite-mark flex-none text-fg-2" aria-hidden="true" />
     {/if}
-    {#if title !== time}<span class="caption-time text-muted tabular-nums">{time}</span>{/if}
+    {#if title !== time}<span class="caption-time truncate text-muted tabular-nums">{time}</span>{/if}
   </div>
 </div>
 
@@ -268,7 +268,9 @@
   .caption-game { flex: 0 1000 auto; min-width: 0; color: var(--color-muted); font-size: var(--text-secondary); }
   @container (width < 300px) { .caption-game { display: none; } }
   .caption-flag { flex: none; color: var(--color-muted); font-size: var(--text-caption); }
-  .caption-time { margin-left: auto; flex: none; padding-left: 8px; font-size: 12px; }
+  /* Last, room permitting: in a narrow card a long time ("Yesterday,
+     11:00 PM") takes at most half the line and ends in an ellipsis. */
+  .caption-time { margin-left: auto; flex: none; max-width: 50%; padding-left: 8px; font-size: 12px; }
 
   /* Marked moments: small white diamonds standing on the picture's foot. */
   .moments {
