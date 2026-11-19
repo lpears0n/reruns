@@ -381,6 +381,28 @@ async function quickCopy(page) {
   await large.getByRole('button', { name: 'Copy clip', exact: true }).filter({ hasText: 'Copied' }).waitFor()
   assert.match(await page.evaluate(() => window.__copied), /clip-0_edit\.mp4$/, 'a large clip copies the prepared file')
   assert.equal(await page.locator('video').count(), 0, 'preparation stays in the library')
+
+  // The clipboard refuses a copy fitted under 25 MB, and the limit then
+  // drops to 10: Try again fits it again rather than claim the old file does.
+  const sharing = async (mb) => {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Settings pages' }).getByRole('button', { name: 'Sharing', exact: true }).click()
+    await page.getByLabel('Maximum size', { exact: true }).selectOption(mb)
+    await page.getByRole('button', { name: 'Back to clips' }).click()
+  }
+  const renders = () => page.evaluate(() => window.__calls.filter((c) => c === 'render_clip').length)
+  await sharing('25')
+  await page.evaluate(() => (window.__copyError = 'the clipboard is busy'))
+  await large.hover()
+  await large.getByRole('button', { name: 'Copy clip', exact: true }).click()
+  await page.getByText("Couldn't copy the clip: the clipboard is busy").waitFor()
+  await page.evaluate(() => (window.__copyError = null))
+  await sharing('10')
+  const before = await renders()
+  await page.getByRole('button', { name: 'Try again', exact: true }).click()
+  await page.getByText('Clip copied, under 10 MB').waitFor()
+  assert.equal(await renders(), before + 1, 'a copy fitted under the old limit is fitted again')
+  assert.equal(await page.evaluate(() => window.__lastRender.maxMb), 10, 'under the new one')
 }
 
 /** A focused card's own keys, Delete's neighbour, and Ctrl+Z. */

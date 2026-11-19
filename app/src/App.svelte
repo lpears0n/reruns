@@ -416,22 +416,24 @@
    *  it meets the size limit; otherwise a render of the selection, kept in
    *  the library like any saved clip. Says so only once it is there: the
    *  button itself says Copied, and the size it was fitted under is said
-   *  beside it. `prepared`: that render, made already, when only the
-   *  clipboard failed. */
-  async function copyReady(clip: Clip, edit?: Edit, untouched = true, prepared?: string) {
+   *  beside it. `prepared`: that render, made already under the limit it
+   *  names, when only the clipboard failed. */
+  async function copyReady(clip: Clip, edit?: Edit, untouched = true, prepared?: { path: string; maxMb: number | null }) {
     if (copyBlocked) return
     const job = { path: clip.path, cancelled: false }
     copyJob = job
     copyingPath = clip.path
     const maxMb = limitMb(false)
-    const asIs = !prepared && untouched && (maxMb === null || clip.size_bytes <= maxMb * 1e6)
-    copyPhase = asIs || prepared ? 'copying' : 'preparing'
+    // A render fitted under a limit since changed is made again.
+    const ready = prepared?.maxMb === maxMb ? prepared.path : undefined
+    const asIs = !ready && untouched && (maxMb === null || clip.size_bytes <= maxMb * 1e6)
+    copyPhase = asIs || ready ? 'copying' : 'preparing'
     renderProgress = 0
-    let path = prepared ?? clip.path
+    let path = ready ?? clip.path
     // Reads `path` when called: once the render exists, Try again only copies it.
-    const retry = () => copyReady(clip, edit, untouched, path === clip.path ? undefined : path)
+    const retry = () => copyReady(clip, edit, untouched, path === clip.path ? undefined : { path, maxMb })
     try {
-      if (!asIs && !prepared) {
+      if (!asIs && !ready) {
         try {
           if (!edit) {
             const source = await api.openForEdit(clip.path)
