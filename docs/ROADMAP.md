@@ -16,13 +16,14 @@ it when every box under "Must have" is ticked.
 
 **Must have**
 
-- [ ] The 1.2.x fixes are on `main`: high-tier AV1 saves
+- [x] The 1.2.x fixes are on `main`: high-tier AV1 saves
   (`fix/av1-clip-save`; saves failed with `not-negotiated` on the owner's
   PC on 2026-11-18), audio devices whose id changed
   (`fix-renamed-audio-device`), and the log folder button
-  (`open-log-folder`).
-- [ ] The redesign is on `main` through a PR from a branch that follows
-  `AGENTS.md`. Setup comes with it.
+  (`open-log-folder`). AV1 came in through #40; the other two were
+  applied to `main` directly.
+- [x] The redesign is on `main` through a PR from a branch that follows
+  `AGENTS.md` (#41, `feature/library-redesign`). Setup comes with it.
 - [ ] Seen working in the real window on Windows (WebView2) and on Linux
   (WebKitGTK, KDE): library, clip workspace, trim, Copy clip, Save clip,
   Settings and themes. No redesign pass has run on Linux yet.
