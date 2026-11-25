@@ -1171,6 +1171,30 @@ behaves changed.
   03:46 local); an unread SDR white level is now 0 (was a silent 80),
   re-read each scan; see docs/HDR.md.
 
+## v2.0.0-beta.1 prepared (2026-11-24, branch `release/prepare-v2-0-0-beta-1`)
+
+Version 2.0.0-beta.1 in the workspace, `app/package.json`,
+`tauri.conf.json` and both `clip-ipc` path dependencies (a `1.2.0`
+requirement doesn't match a 2.0 pre-release). Notes are in
+`docs/release-notes/v2.0.0-beta.1.md`. The dash in the tag makes the Release
+workflow publish a pre-release, which installed 1.2.0 copies never see,
+because the updater reads `releases/latest`. The beta ticks none of the
+v2.0.0 must-haves; it gets the redesign and Setup into testers' hands.
+Checked locally: Setup's tests and the app's build scripts accept the
+version. A Release workflow run on the branch built NSIS, Setup, AppImage
+and deb, but Tauri CLI 2.12.4's rpm bundler refuses a version with a dash
+(fixed upstream in tauri-apps/tauri#16336), so pre-releases now skip the
+`.rpm`. The deb's control file gets `Version: 2.0.0-beta.1` as is (Tauri's
+`debian.rs`), which dpkg sorts after 2.0.0; the notes tell deb testers.
+The same runs showed tauri-action reading `app/setup/tauri.conf.json` (the
+first under `projectPath: app`), so a tag build would have stopped at "No
+artifacts were found." with nothing uploaded. It now uses
+`projectPath: app/src-tauri` with `tauriScript: pnpm tauri`, and a branch
+run lists the real installers. Not run: a tag build (draft release,
+`latest.json`, Setup attached).
+After the PR merges: tag `v2.0.0-beta.1` on `main`'s merge commit, then
+publish the draft as a pre-release.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner
