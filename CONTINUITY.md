@@ -1171,6 +1171,23 @@ behaves changed.
   03:46 local); an unread SDR white level is now 0 (was a silent 80),
   re-read each scan; see docs/HDR.md.
 
+## v2.0.0-beta.1 prepared (2026-11-24, branch `release/prepare-v2-0-0-beta-1`)
+
+Version 2.0.0-beta.1 in the workspace, `app/package.json`,
+`tauri.conf.json` and both `clip-ipc` path dependencies (a `1.2.0`
+requirement doesn't match a 2.0 pre-release). Notes are in
+`docs/release-notes/v2.0.0-beta.1.md`. The dash in the tag makes the Release
+workflow publish a pre-release, which installed 1.2.0 copies never see,
+because the updater reads `releases/latest`. The beta ticks none of the
+v2.0.0 must-haves; it gets the redesign and Setup into testers' hands.
+Checked locally: Setup's tests and the app's build scripts accept the
+version. Not checked: the bundlers (NSIS, AppImage, deb, rpm) with a
+pre-release version, so run the Release workflow on the branch first. On
+the `.deb`, check `dpkg-deb -f <file> Version`: if it reads
+`2.0.0-beta.1`, dpkg takes `beta.1` as a Debian revision and sorts it after
+2.0.0. After the PR merges: tag `v2.0.0-beta.1` on `main`'s merge commit,
+then publish the draft as a pre-release.
+
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
    tags `v1.0.0` on `main`; the Release workflow makes the draft. Owner
