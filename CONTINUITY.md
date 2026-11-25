@@ -1186,6 +1186,12 @@ and deb, but Tauri CLI 2.12.4's rpm bundler refuses a version with a dash
 (fixed upstream in tauri-apps/tauri#16336), so pre-releases now skip the
 `.rpm`. The deb's control file gets `Version: 2.0.0-beta.1` as is (Tauri's
 `debian.rs`), which dpkg sorts after 2.0.0; the notes tell deb testers.
+The same runs showed tauri-action reading `app/setup/tauri.conf.json` (the
+first under `projectPath: app`), so a tag build would have stopped at "No
+artifacts were found." with nothing uploaded. It now uses
+`projectPath: app/src-tauri` with `tauriScript: pnpm tauri`, and a branch
+run lists the real installers. Not run: a tag build (draft release,
+`latest.json`, Setup attached).
 After the PR merges: tag `v2.0.0-beta.1` on `main`'s merge commit, then
 publish the draft as a pre-release.
 
