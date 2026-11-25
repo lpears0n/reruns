@@ -29,7 +29,8 @@ before: unsigned installers, and apps that never look for updates.
 Installed copies find a published release the next time they start, or
 within six hours while running, or straight away with Settings → General
 → Check now. A tag with a dash
-(`v0.2.0-beta.1`) is published as a pre-release. Apps don't update to
+(`v0.2.0-beta.1`) is published as a pre-release, without the `.rpm`, because
+Tauri's rpm bundler refuses a version with a dash. Apps don't update to
 pre-releases, because they only read the latest full release.
 
 ## Updates (one-time setup)

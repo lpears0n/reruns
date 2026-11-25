@@ -145,14 +145,21 @@ jobs:
       - name: Release notes and version check
         id: notes
         shell: bash
+        env:
+          BUNDLES: ${{ matrix.bundles }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            app=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
-            if [ "${GITHUB_REF_NAME#v}" != "$app" ]; then
-              echo "::error::tag $GITHUB_REF_NAME doesn't match the app version $app; bump it first (docs/RELEASING.md)"
-              exit 1
-            fi
+          app=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$app" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match the app version $app; bump it first (docs/RELEASING.md)"
+            exit 1
           fi
+          # shortcut: Tauri CLI 2.12.4's rpm bundler refuses a version with a
+          # dash, so a pre-release (2.0.0-beta.1) ships without the .rpm. Drop
+          # this once the CLI has tauri-apps/tauri#16336.
+          case "$app" in
+            *-*) echo "bundles=${BUNDLES/,rpm/}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "bundles=$BUNDLES" >> "$GITHUB_OUTPUT" ;;
+          esac
           f="docs/release-notes/${GITHUB_REF_NAME}.md"
           if [ "$GITHUB_REF_TYPE" = tag ] && [ -f "$f" ]; then
             { echo 'body<<NOTES_EOF'; cat "$f"; echo 'NOTES_EOF'; } >> "$GITHUB_OUTPUT"
@@ -171,7 +178,7 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         with:
           projectPath: app
-          args: --bundles ${{ matrix.bundles }} ${{ env.RELEASE_CONFIG_ARGS }}
+          args: --bundles ${{ steps.notes.outputs.bundles }} ${{ env.RELEASE_CONFIG_ARGS }}
           # Without a tag name the action only builds.
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: Reruns ${{ github.ref_name }}

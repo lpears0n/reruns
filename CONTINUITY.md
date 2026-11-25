@@ -1181,12 +1181,13 @@ workflow publish a pre-release, which installed 1.2.0 copies never see,
 because the updater reads `releases/latest`. The beta ticks none of the
 v2.0.0 must-haves; it gets the redesign and Setup into testers' hands.
 Checked locally: Setup's tests and the app's build scripts accept the
-version. Not checked: the bundlers (NSIS, AppImage, deb, rpm) with a
-pre-release version, so run the Release workflow on the branch first. On
-the `.deb`, check `dpkg-deb -f <file> Version`: if it reads
-`2.0.0-beta.1`, dpkg takes `beta.1` as a Debian revision and sorts it after
-2.0.0. After the PR merges: tag `v2.0.0-beta.1` on `main`'s merge commit,
-then publish the draft as a pre-release.
+version. A Release workflow run on the branch built NSIS, Setup, AppImage
+and deb, but Tauri CLI 2.12.4's rpm bundler refuses a version with a dash
+(fixed upstream in tauri-apps/tauri#16336), so pre-releases now skip the
+`.rpm`. The deb's control file gets `Version: 2.0.0-beta.1` as is (Tauri's
+`debian.rs`), which dpkg sorts after 2.0.0; the notes tell deb testers.
+After the PR merges: tag `v2.0.0-beta.1` on `main`'s merge commit, then
+publish the draft as a pre-release.
 
 ## Next, in order
 1. v1.0.0: owner adds the updater key secrets (`docs/RELEASING.md`), then
